@@ -1,3 +1,38 @@
+create extension if not exists pgcrypto;
+
+create table if not exists crm_snapshots (
+  id text primary key default 'main' check (id = 'main'),
+  leads jsonb not null default '[]'::jsonb,
+  investments jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table crm_snapshots enable row level security;
+
+drop policy if exists "authenticated users can read crm snapshots" on crm_snapshots;
+drop policy if exists "authenticated users can insert crm snapshots" on crm_snapshots;
+drop policy if exists "authenticated users can update crm snapshots" on crm_snapshots;
+
+create policy "authenticated users can read crm snapshots"
+  on crm_snapshots for select
+  to authenticated
+  using (true);
+
+create policy "authenticated users can insert crm snapshots"
+  on crm_snapshots for insert
+  to authenticated
+  with check (true);
+
+create policy "authenticated users can update crm snapshots"
+  on crm_snapshots for update
+  to authenticated
+  using (true)
+  with check (true);
+
+insert into crm_snapshots (id)
+values ('main')
+on conflict (id) do nothing;
+
 create table if not exists companies (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,

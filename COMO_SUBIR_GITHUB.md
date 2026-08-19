@@ -29,3 +29,41 @@ Na Vercel, use:
 - Senha: `Baltt26@`
 
 Na proxima etapa, esse acesso deve virar login real pela Supabase.
+
+## Conectar Supabase
+
+1. Na Supabase, crie um projeto novo.
+2. Abra `SQL Editor` > `New query`.
+3. Cole o conteudo de `supabase/schema.sql` e clique em `Run`.
+4. Abra `Authentication` > `Users` > `Add user`.
+5. Crie o usuario:
+
+```text
+Email: baltt@baltt.com.br
+Password: Baltt26@
+Auto Confirm User: ligado
+```
+
+6. Abra `Project Settings` > `API` e copie:
+
+```text
+Project URL
+anon public key
+```
+
+7. Na Vercel, abra o projeto > `Settings` > `Environment Variables` e adicione:
+
+```bash
+VITE_SUPABASE_URL=Project URL
+VITE_SUPABASE_ANON_KEY=anon public key
+VITE_SUPABASE_LOGIN_EMAIL=baltt@baltt.com.br
+```
+
+8. Faca um novo deploy na Vercel.
+
+Depois disso, o login pode ser feito com:
+
+```text
+Usuario: Baltt@
+Senha: Baltt26@
+```

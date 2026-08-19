@@ -44,9 +44,17 @@ Para o passo a passo de GitHub, veja `COMO_SUBIR_GITHUB.md`.
 
 ## Supabase Depois
 
-O arquivo `supabase/schema.sql` ja guarda uma base inicial para a proxima etapa. Quando for conectar, preencher:
+O CRM ja esta preparado para usar Supabase quando as variaveis estiverem na Vercel.
+
+1. Criar um projeto na Supabase.
+2. Rodar o SQL de `supabase/schema.sql` no SQL Editor.
+3. Criar um usuario em Authentication com e-mail `baltt@baltt.com.br` e senha `Baltt26@`.
+4. Colocar estas variaveis na Vercel:
 
 ```bash
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
+VITE_SUPABASE_LOGIN_EMAIL=baltt@baltt.com.br
 ```
+
+Com essa configuracao, a tela aceita `Baltt@` como usuario e autentica no e-mail da Supabase.

@@ -174,6 +174,47 @@ a {
   line-height: 1.1;
 }
 
+.sync-panel {
+  display: grid;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 4px solid #aebccc;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sync-panel.shared {
+  border-left-color: var(--green);
+}
+
+.sync-panel.saving,
+.sync-panel.loading {
+  border-left-color: var(--amber);
+}
+
+.sync-panel.error {
+  border-left-color: var(--red);
+}
+
+.sync-panel.local {
+  border-left-color: #aebccc;
+}
+
+.sync-panel span {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sync-panel small {
+  color: #aebccc;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .nav-list {
   display: grid;
   gap: 8px;

@@ -2,6 +2,14 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import {
+  loadCrmSnapshot,
+  saveCrmSnapshot,
+  signInCrm,
+  signOutCrm,
+  supabase,
+  supabaseEnabled,
+} from "../src/supabaseClient";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
@@ -52,6 +60,7 @@ type Investment = {
 };
 type InvestmentForm = Omit<Investment, "id">;
 type AuthState = "checking" | "authenticated" | "anonymous";
+type SyncState = "local" | "loading" | "shared" | "saving" | "error";
 
 const STORAGE_KEY = "baltt-crm-leads-v1";
 const INVESTMENT_STORAGE_KEY = "baltt-crm-investments-v1";
@@ -766,6 +775,7 @@ function NavPictogram({ icon }: { icon: NavIconKey }) {
 
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>(() => {
+    if (supabaseEnabled) return "checking";
     if (typeof window === "undefined") return "checking";
 
     return window.localStorage.getItem(AUTH_STORAGE_KEY) === "authenticated"
@@ -817,18 +827,149 @@ export default function Home() {
     emptyInvestment(),
   );
   const [modalOpen, setModalOpen] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>(
+    supabaseEnabled ? "loading" : "local",
+  );
+  const [syncMessage, setSyncMessage] = useState(
+    supabaseEnabled
+      ? "Aguardando login Supabase"
+      : "Dados locais neste navegador",
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const remoteReadyRef = useRef(!supabaseEnabled);
+  const loadingRemoteRef = useRef(false);
+  const latestLeadsRef = useRef(leads);
+  const latestInvestmentsRef = useRef(investments);
 
   useEffect(() => {
+    latestLeadsRef.current = leads;
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
   }, [leads]);
 
   useEffect(() => {
+    latestInvestmentsRef.current = investments;
     window.localStorage.setItem(
       INVESTMENT_STORAGE_KEY,
       JSON.stringify(investments),
     );
   }, [investments]);
+
+  useEffect(() => {
+    if (!supabaseEnabled || !supabase) return;
+
+    let mounted = true;
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!mounted) return;
+        setAuthState(data.session ? "authenticated" : "anonymous");
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setAuthState("anonymous");
+        setLoginError("Nao foi possivel verificar o login.");
+      });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setAuthState(session ? "authenticated" : "anonymous");
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseEnabled || authState !== "authenticated") return;
+
+    let cancelled = false;
+
+    async function loadRemoteData() {
+      loadingRemoteRef.current = true;
+      setSyncState("loading");
+      setSyncMessage("Carregando base Supabase...");
+
+      try {
+        const snapshot = await loadCrmSnapshot();
+        if (cancelled) return;
+
+        if (snapshot) {
+          const remoteLeads = snapshot.leads as Lead[];
+          const remoteInvestments = normalizeInvestments(snapshot.investments);
+
+          if (remoteLeads.length > 0) {
+            setLeads(remoteLeads);
+            setSelectedLeadId(remoteLeads[0]?.id ?? null);
+          } else {
+            await saveCrmSnapshot({
+              leads: latestLeadsRef.current,
+              investments: latestInvestmentsRef.current,
+            });
+          }
+
+          setInvestments(remoteInvestments);
+        } else {
+          await saveCrmSnapshot({
+            leads: latestLeadsRef.current,
+            investments: latestInvestmentsRef.current,
+          });
+        }
+
+        if (!cancelled) {
+          remoteReadyRef.current = true;
+          setSyncState("shared");
+          setSyncMessage("Base Supabase ativa");
+        }
+      } catch {
+        if (!cancelled) {
+          remoteReadyRef.current = false;
+          setSyncState("error");
+          setSyncMessage("Nao foi possivel carregar a Supabase");
+        }
+      } finally {
+        loadingRemoteRef.current = false;
+      }
+    }
+
+    loadRemoteData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authState]);
+
+  useEffect(() => {
+    if (
+      !supabaseEnabled ||
+      authState !== "authenticated" ||
+      !remoteReadyRef.current ||
+      loadingRemoteRef.current
+    ) {
+      return;
+    }
+
+    const saveTimer = window.setTimeout(() => {
+      setSyncState("saving");
+      setSyncMessage("Salvando na Supabase...");
+
+      saveCrmSnapshot({ leads, investments })
+        .then(() => {
+          setSyncState("shared");
+          setSyncMessage("Base Supabase ativa");
+        })
+        .catch(() => {
+          setSyncState("error");
+          setSyncMessage("Nao foi possivel salvar na Supabase");
+        });
+    }, 550);
+
+    return () => window.clearTimeout(saveTimer);
+  }, [leads, investments, authState]);
 
   const activeCompanyData = getCompany(activeCompany);
   const activeViewData =
@@ -1135,8 +1276,25 @@ export default function Home() {
     reader.readAsText(file, "utf-8");
   }
 
-  function handleLogin(event: FormEvent<HTMLFormElement>) {
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setLoginError("");
+
+    if (supabaseEnabled) {
+      setAuthState("checking");
+
+      try {
+        const session = await signInCrm(loginUser, loginPassword);
+        if (!session) throw new Error("Login sem sessao");
+        setAuthState("authenticated");
+        setLoginPassword("");
+      } catch {
+        setAuthState("anonymous");
+        setLoginError("Usuario ou senha invalidos na Supabase.");
+      }
+
+      return;
+    }
 
     if (loginUser.trim() === LOGIN_USER && loginPassword === LOGIN_PASSWORD) {
       window.localStorage.setItem(AUTH_STORAGE_KEY, "authenticated");
@@ -1150,7 +1308,13 @@ export default function Home() {
   }
 
   function logout() {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    if (supabaseEnabled) {
+      signOutCrm().catch(() => undefined);
+      remoteReadyRef.current = false;
+    } else {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+
     setAuthState("anonymous");
     setLoginUser("");
     setLoginPassword("");
@@ -1232,7 +1396,11 @@ export default function Home() {
           <div>
             <p className="eyebrow">CRM Comercial</p>
             <h1>Entrar no CRM Baltt</h1>
-            <span>Acesso temporario para a equipe comercial.</span>
+            <span>
+              {supabaseEnabled
+                ? "Acesso conectado a Supabase."
+                : "Acesso temporario para a equipe comercial."}
+            </span>
           </div>
 
           <form onSubmit={handleLogin}>
@@ -1241,6 +1409,7 @@ export default function Home() {
               <input
                 autoComplete="username"
                 disabled={checkingAccess}
+                placeholder="Baltt@"
                 value={loginUser}
                 onChange={(event) => setLoginUser(event.target.value)}
               />
@@ -1257,7 +1426,7 @@ export default function Home() {
             </label>
             {loginError ? <p className="login-error">{loginError}</p> : null}
             <button className="primary-button" disabled={checkingAccess} type="submit">
-              Entrar
+              {checkingAccess ? "Verificando..." : "Entrar"}
             </button>
           </form>
         </section>
@@ -1274,6 +1443,21 @@ export default function Home() {
             <p>CRM Comercial</p>
             <strong>Grupo Baltt</strong>
           </div>
+        </div>
+
+        <div className={`sync-panel ${syncState}`}>
+          <span>
+            {syncState === "shared"
+              ? "Base Supabase"
+              : syncState === "saving"
+                ? "Salvando"
+                : syncState === "loading"
+                  ? "Conectando"
+                  : syncState === "error"
+                    ? "Atenção"
+                    : "Modo local"}
+          </span>
+          <small>{syncMessage}</small>
         </div>
 
         <nav className="nav-list" aria-label="Areas do CRM">
