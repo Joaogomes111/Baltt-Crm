@@ -836,6 +836,7 @@ export default function Home() {
       : "Dados locais neste navegador",
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const detailsPanelRef = useRef<HTMLElement | null>(null);
   const remoteReadyRef = useRef(!supabaseEnabled);
   const loadingRemoteRef = useRef(false);
   const latestLeadsRef = useRef(leads);
@@ -971,6 +972,23 @@ export default function Home() {
     return () => window.clearTimeout(saveTimer);
   }, [leads, investments, authState]);
 
+  useEffect(() => {
+    if (!selectedLeadId || activeView !== "funis") return;
+
+    function closeDetailsOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (detailsPanelRef.current?.contains(target)) return;
+
+      setSelectedLeadId(null);
+    }
+
+    document.addEventListener("pointerdown", closeDetailsOnOutsideClick);
+    return () => {
+      document.removeEventListener("pointerdown", closeDetailsOnOutsideClick);
+    };
+  }, [activeView, selectedLeadId]);
+
   const activeCompanyData = getCompany(activeCompany);
   const activeViewData =
     navItems.find((item) => item.key === activeView) ?? navItems[0];
@@ -1012,14 +1030,14 @@ export default function Home() {
   }, [companyLeads, query, sourceFilter, dateFilter, sortOrder]);
 
   const selectedLead = useMemo(
-    () =>
-      leads.find(
+    () => {
+      if (!selectedLeadId) return null;
+
+      return leads.find(
         (lead) => lead.id === selectedLeadId && lead.company === activeCompany,
-      ) ??
-      filteredLeads[0] ??
-      companyLeads[0] ??
-      null,
-    [leads, selectedLeadId, activeCompany, filteredLeads, companyLeads],
+      ) ?? null;
+    },
+    [leads, selectedLeadId, activeCompany],
   );
 
   const stageTotals = useMemo(() => {
@@ -1683,7 +1701,9 @@ export default function Home() {
                           className={`lead-card ${selectedLead?.id === lead.id ? "active" : ""}`}
                           draggable
                           key={lead.id}
-                          onClick={() => setSelectedLeadId(lead.id)}
+                          onClick={() => {
+                            setSelectedLeadId(lead.id);
+                          }}
                           onDragStart={() => setDraggedId(lead.id)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
@@ -1728,13 +1748,15 @@ export default function Home() {
           </div>
 
           {selectedLead ? (
-          <aside className="details-panel">
+          <aside className="details-panel" ref={detailsPanelRef}>
               <>
                 <button
                   type="button"
                   className="details-close"
                   aria-label="Fechar detalhes do lead"
-                  onClick={() => setSelectedLeadId(null)}
+                  onClick={() => {
+                    setSelectedLeadId(null);
+                  }}
                 >
                   X
                 </button>
