@@ -538,9 +538,13 @@ textarea {
 
 .main-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+.main-grid.details-open {
+  grid-template-columns: minmax(0, 1fr) 340px;
 }
 
 .board {
@@ -747,6 +751,29 @@ textarea {
   position: sticky;
   top: 20px;
   padding: 14px;
+}
+
+.details-close {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(15, 39, 66, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.details-close:hover {
+  background: rgba(15, 39, 66, 0.92);
 }
 
 .details-hero {

@@ -1648,7 +1648,7 @@ export default function Home() {
 
         {activeView === "funis" ? (
           <>
-            <section className="main-grid">
+            <section className={`main-grid ${selectedLead ? "details-open" : "details-closed"}`}>
           <div className="board" aria-label={`Funil ${activeCompanyData.name}`}>
             {stages.map((stage) => {
               const stageLeads = filteredLeads.filter(
@@ -1727,9 +1727,17 @@ export default function Home() {
             })}
           </div>
 
+          {selectedLead ? (
           <aside className="details-panel">
-            {selectedLead ? (
               <>
+                <button
+                  type="button"
+                  className="details-close"
+                  aria-label="Fechar detalhes do lead"
+                  onClick={() => setSelectedLeadId(null)}
+                >
+                  X
+                </button>
                 <div className="details-hero">
                   <span>{getCompany(selectedLead.company).shortName}</span>
                   <h2>{selectedLead.name}</h2>
@@ -1813,10 +1821,8 @@ export default function Home() {
                   </label>
                 </div>
               </>
-            ) : (
-              <div className="empty-details">Selecione um lead</div>
-            )}
           </aside>
+          ) : null}
             </section>
 
             <section className="lower-grid">
