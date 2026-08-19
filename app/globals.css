@@ -263,8 +263,7 @@ a {
   color: #fff;
 }
 
-.company-panel,
-.phone-panel {
+.company-panel {
   margin-top: 18px;
 }
 
@@ -320,23 +319,6 @@ a {
 
 .company-button strong {
   color: var(--amber);
-}
-
-.phone-row {
-  display: grid;
-  gap: 4px;
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.phone-row span {
-  color: #aebccc;
-  font-size: 12px;
-}
-
-.phone-row strong {
-  color: #fff;
-  font-size: 14px;
 }
 
 .workspace {

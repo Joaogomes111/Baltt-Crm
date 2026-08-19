@@ -1521,24 +1521,6 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="phone-panel">
-          <div className="panel-heading">
-            <span>WhatsApp</span>
-            <small>3 numeros</small>
-          </div>
-          {companies.map((company) => (
-            <a
-              className="phone-row"
-              href={`https://wa.me/55${normalizePhone(company.phone)}`}
-              key={company.key}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <span>{company.shortName}</span>
-              <strong>{company.phone}</strong>
-            </a>
-          ))}
-        </div>
       </aside>
 
       <section className="workspace">
