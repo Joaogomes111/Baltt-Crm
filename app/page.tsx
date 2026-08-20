@@ -564,6 +564,17 @@ function getCompany(key: CompanyKey) {
   return companies.find((company) => company.key === key) ?? companies[0];
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
+  return "erro desconhecido";
+}
+
 function isCompanyKey(value: string | null | undefined): value is CompanyKey {
   return companyKeys.includes(value as CompanyKey);
 }
@@ -953,23 +964,11 @@ export default function Home() {
               : firstAllowedCompany(nextPermission),
           );
 
-          if (remoteLeads.length > 0) {
-            setLeads(remoteLeads);
-            setSelectedLeadId(remoteLeads[0]?.id ?? null);
-          } else {
-            await saveCrmSnapshot({
-              leads: latestLeadsRef.current,
-              investments: latestInvestmentsRef.current,
-            });
-          }
-
+          setLeads(remoteLeads);
+          setSelectedLeadId(remoteLeads[0]?.id ?? null);
           setInvestments(remoteInvestments);
         } else {
           setPermission(adminPermission);
-          await saveCrmSnapshot({
-            leads: latestLeadsRef.current,
-            investments: latestInvestmentsRef.current,
-          });
         }
 
         if (!cancelled) {
@@ -977,11 +976,12 @@ export default function Home() {
           setSyncState("shared");
           setSyncMessage("Base Supabase ativa");
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
+          console.error("[Baltt CRM] Falha ao carregar a Supabase", error);
           remoteReadyRef.current = false;
           setSyncState("error");
-          setSyncMessage("Nao foi possivel carregar a Supabase");
+          setSyncMessage(`Falha Supabase: ${getErrorMessage(error)}`);
         }
       } finally {
         loadingRemoteRef.current = false;
@@ -1014,9 +1014,10 @@ export default function Home() {
           setSyncState("shared");
           setSyncMessage("Base Supabase ativa");
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error("[Baltt CRM] Falha ao salvar na Supabase", error);
           setSyncState("error");
-          setSyncMessage("Nao foi possivel salvar na Supabase");
+          setSyncMessage(`Falha ao salvar: ${getErrorMessage(error)}`);
         });
     }, 550);
 
