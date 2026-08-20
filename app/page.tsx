@@ -10,6 +10,7 @@ import {
   supabase,
   supabaseEnabled,
 } from "../src/supabaseClient";
+import type { CrmUserPermission } from "../src/supabaseClient";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
@@ -102,6 +103,14 @@ const companies: Array<{
     accent: "#2d72b8",
   },
 ];
+
+const companyKeys = companies.map((company) => company.key);
+const adminPermission: CrmUserPermission = {
+  role: "admin",
+  companyKey: null,
+  allowedCompanies: companyKeys,
+  email: null,
+};
 
 const stages: Array<{ key: StageKey; label: string; tone: string }> = [
   { key: "novo", label: "Novo WhatsApp", tone: "blue" },
@@ -555,6 +564,37 @@ function getCompany(key: CompanyKey) {
   return companies.find((company) => company.key === key) ?? companies[0];
 }
 
+function isCompanyKey(value: string | null | undefined): value is CompanyKey {
+  return companyKeys.includes(value as CompanyKey);
+}
+
+function normalizePermission(permission?: CrmUserPermission | null): CrmUserPermission {
+  if (!permission || permission.role === "admin") return adminPermission;
+
+  const allowedCompanies = permission.allowedCompanies.filter(isCompanyKey);
+  const companyKey = isCompanyKey(permission.companyKey)
+    ? permission.companyKey
+    : allowedCompanies[0] ?? null;
+
+  return {
+    role: "empresa",
+    companyKey,
+    allowedCompanies: companyKey ? [companyKey] : allowedCompanies,
+    email: permission.email,
+  };
+}
+
+function companyIsAllowed(permission: CrmUserPermission, companyKey: CompanyKey) {
+  return (
+    permission.role === "admin" ||
+    permission.allowedCompanies.includes(companyKey)
+  );
+}
+
+function firstAllowedCompany(permission: CrmUserPermission) {
+  return companies.find((company) => companyIsAllowed(permission, company.key))?.key ?? "baltt";
+}
+
 function daysSince(date: string) {
   const value = new Date(`${normalizeDate(date)}T12:00:00`);
   return Math.max(
@@ -835,6 +875,8 @@ export default function Home() {
       ? "Aguardando login Supabase"
       : "Dados locais neste navegador",
   );
+  const [permission, setPermission] =
+    useState<CrmUserPermission>(adminPermission);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const detailsPanelRef = useRef<HTMLElement | null>(null);
   const remoteReadyRef = useRef(!supabaseEnabled);
@@ -900,8 +942,16 @@ export default function Home() {
         if (cancelled) return;
 
         if (snapshot) {
+          const nextPermission = normalizePermission(snapshot.permission);
           const remoteLeads = snapshot.leads as Lead[];
           const remoteInvestments = normalizeInvestments(snapshot.investments);
+
+          setPermission(nextPermission);
+          setActiveCompany((current) =>
+            companyIsAllowed(nextPermission, current)
+              ? current
+              : firstAllowedCompany(nextPermission),
+          );
 
           if (remoteLeads.length > 0) {
             setLeads(remoteLeads);
@@ -915,6 +965,7 @@ export default function Home() {
 
           setInvestments(remoteInvestments);
         } else {
+          setPermission(adminPermission);
           await saveCrmSnapshot({
             leads: latestLeadsRef.current,
             investments: latestInvestmentsRef.current,
@@ -992,10 +1043,15 @@ export default function Home() {
   const activeCompanyData = getCompany(activeCompany);
   const activeViewData =
     navItems.find((item) => item.key === activeView) ?? navItems[0];
+  const hasAdminAccess = permission.role === "admin";
+  const activeCompanyAllowed = companyIsAllowed(permission, activeCompany);
 
   const companyLeads = useMemo(
-    () => leads.filter((lead) => lead.company === activeCompany),
-    [leads, activeCompany],
+    () =>
+      activeCompanyAllowed
+        ? leads.filter((lead) => lead.company === activeCompany)
+        : [],
+    [leads, activeCompany, activeCompanyAllowed],
   );
 
   const filteredLeads = useMemo(() => {
@@ -1163,6 +1219,8 @@ export default function Home() {
           : `${metrics.conversion}% conversao e ${metrics.qualified}% qualificados`;
 
   function changeCompany(companyKey: CompanyKey) {
+    if (!companyIsAllowed(permission, companyKey)) return;
+
     setActiveCompany(companyKey);
     setSelectedLeadId(
       leads.find((lead) => lead.company === companyKey)?.id ?? null,
@@ -1172,6 +1230,7 @@ export default function Home() {
   function addInvestment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (!hasAdminAccess) return;
     if (!investmentForm.month.trim()) return;
 
     const investment = {
@@ -1189,6 +1248,8 @@ export default function Home() {
     investmentId: string,
     patch: Partial<InvestmentForm>,
   ) {
+    if (!hasAdminAccess) return;
+
     const nextInvestments = investments.map((item) => {
       if (item.id !== investmentId) return item;
 
@@ -1208,12 +1269,17 @@ export default function Home() {
   }
 
   function removeInvestment(investmentId: string) {
+    if (!hasAdminAccess) return;
+
     setInvestments((current) =>
       current.filter((item) => item.id !== investmentId),
     );
   }
 
   function moveLead(leadId: string, stage: StageKey) {
+    const targetLead = leads.find((lead) => lead.id === leadId);
+    if (!targetLead || !companyIsAllowed(permission, targetLead.company)) return;
+
     const nextLeads = leads.map((lead) => {
       if (lead.id !== leadId) return lead;
 
@@ -1231,12 +1297,19 @@ export default function Home() {
   }
 
   function openNewLead() {
+    const companyKey = activeCompanyAllowed
+      ? activeCompany
+      : firstAllowedCompany(permission);
+    if (!companyIsAllowed(permission, companyKey)) return;
+
     setEditingLead(null);
-    setForm(emptyLead(activeCompany));
+    setForm(emptyLead(companyKey));
     setModalOpen(true);
   }
 
   function openEditLead(lead: Lead) {
+    if (!companyIsAllowed(permission, lead.company)) return;
+
     setEditingLead(lead);
     setForm(leadToForm(lead));
     setModalOpen(true);
@@ -1246,6 +1319,7 @@ export default function Home() {
     event.preventDefault();
 
     if (!form.name.trim()) return;
+    if (!companyIsAllowed(permission, form.company)) return;
 
     if (editingLead) {
       const updatedLead = {
@@ -1283,6 +1357,8 @@ export default function Home() {
   }
 
   function handleCsvUpload(file: File) {
+    if (!activeCompanyAllowed) return;
+
     const reader = new FileReader();
     reader.onload = () => {
       const imported = mapCsvRows(String(reader.result ?? ""), activeCompany);
@@ -1334,6 +1410,8 @@ export default function Home() {
     }
 
     setAuthState("anonymous");
+    setPermission(adminPermission);
+    setSelectedLeadId(null);
     setLoginUser("");
     setLoginPassword("");
   }
@@ -1452,6 +1530,21 @@ export default function Home() {
     );
   }
 
+  if (supabaseEnabled && syncState === "loading") {
+    return (
+      <main className="login-shell">
+        <section className="login-card" aria-label="Carregando CRM Baltt">
+          <div className="login-brand" role="img" aria-label="Grupo Baltt" />
+          <div>
+            <p className="eyebrow">CRM Comercial</p>
+            <h1>Carregando CRM Baltt</h1>
+            <span>Verificando usuario, permissao e base de leads.</span>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="crm-shell">
       <aside className="sidebar">
@@ -1503,18 +1596,22 @@ export default function Home() {
           <div className="company-list">
             {companies.map((company) => {
               const count = leads.filter((lead) => lead.company === company.key).length;
+              const allowed = companyIsAllowed(permission, company.key);
+
               return (
                 <button
                   className={`company-button ${
                     activeCompany === company.key ? "selected" : ""
-                  }`}
+                  } ${allowed ? "" : "locked"}`}
+                  disabled={!allowed}
                   key={company.key}
                   onClick={() => changeCompany(company.key)}
                   style={{ "--company-accent": company.accent } as CSSProperties}
                   type="button"
+                  title={allowed ? company.name : "Funil bloqueado para este usuario"}
                 >
                   <span>{company.shortName}</span>
-                  <strong>{count}</strong>
+                  {allowed ? <strong>{count}</strong> : <span className="lock-icon" aria-hidden="true" />}
                 </button>
               );
             })}
@@ -1556,12 +1653,18 @@ export default function Home() {
             />
             <button
               className="secondary-button"
+              disabled={!activeCompanyAllowed}
               type="button"
               onClick={() => fileInputRef.current?.click()}
             >
               Importar planilha
             </button>
-            <button className="primary-button" type="button" onClick={openNewLead}>
+            <button
+              className="primary-button"
+              disabled={!activeCompanyAllowed}
+              type="button"
+              onClick={openNewLead}
+            >
               Novo lead
             </button>
             <button className="secondary-button logout-button" type="button" onClick={logout}>
@@ -1595,16 +1698,23 @@ export default function Home() {
 
         <section className="control-strip">
           <div className="segmented" aria-label="Empresas">
-            {companies.map((company) => (
-              <button
-                type="button"
-                key={company.key}
-                className={activeCompany === company.key ? "active" : ""}
-                onClick={() => changeCompany(company.key)}
-              >
-                {company.shortName}
-              </button>
-            ))}
+            {companies.map((company) => {
+              const allowed = companyIsAllowed(permission, company.key);
+
+              return (
+                <button
+                  type="button"
+                  key={company.key}
+                  className={`${activeCompany === company.key ? "active" : ""} ${allowed ? "" : "locked"}`}
+                  disabled={!allowed}
+                  onClick={() => changeCompany(company.key)}
+                  title={allowed ? company.name : "Funil bloqueado para este usuario"}
+                >
+                  {!allowed ? <span className="lock-icon" aria-hidden="true" /> : null}
+                  <span>{company.shortName}</span>
+                </button>
+              );
+            })}
           </div>
           <div className="filters">
             <label>
@@ -1966,6 +2076,7 @@ export default function Home() {
               <label>
                 Mes
                 <input
+                  disabled={!hasAdminAccess}
                   placeholder="agosto 26"
                   value={investmentForm.month}
                   onChange={(event) =>
@@ -1979,6 +2090,7 @@ export default function Home() {
               <label>
                 Meta Ads
                 <input
+                  disabled={!hasAdminAccess}
                   min="0"
                   step="0.01"
                   type="number"
@@ -1994,6 +2106,7 @@ export default function Home() {
               <label>
                 Google Ads
                 <input
+                  disabled={!hasAdminAccess}
                   min="0"
                   step="0.01"
                   type="number"
@@ -2009,6 +2122,7 @@ export default function Home() {
               <label>
                 Observacoes
                 <input
+                  disabled={!hasAdminAccess}
                   placeholder="Leads, cliques ou observacao do mes"
                   value={investmentForm.note}
                   onChange={(event) =>
@@ -2019,7 +2133,7 @@ export default function Home() {
                   }
                 />
               </label>
-              <button className="primary-button" type="submit">
+              <button className="primary-button" disabled={!hasAdminAccess} type="submit">
                 Adicionar
               </button>
             </form>
@@ -2042,6 +2156,7 @@ export default function Home() {
                   <div className="investment-row editable-investment-row" key={item.id}>
                     <input
                       aria-label={`Mes ${item.month}`}
+                      disabled={!hasAdminAccess}
                       value={item.month}
                       onChange={(event) =>
                         updateInvestment(item.id, { month: event.target.value })
@@ -2049,6 +2164,7 @@ export default function Home() {
                     />
                     <input
                       aria-label={`Meta Ads ${item.month}`}
+                      disabled={!hasAdminAccess}
                       min="0"
                       step="0.01"
                       type="number"
@@ -2061,6 +2177,7 @@ export default function Home() {
                     />
                     <input
                       aria-label={`Google Ads ${item.month}`}
+                      disabled={!hasAdminAccess}
                       min="0"
                       step="0.01"
                       type="number"
@@ -2074,6 +2191,7 @@ export default function Home() {
                     <strong>{currency.format(investmentLineTotal(item))}</strong>
                     <input
                       aria-label={`Observacoes ${item.month}`}
+                      disabled={!hasAdminAccess}
                       value={item.note}
                       onChange={(event) =>
                         updateInvestment(item.id, { note: event.target.value })
@@ -2081,6 +2199,7 @@ export default function Home() {
                     />
                     <button
                       className="danger-button compact-danger"
+                      disabled={!hasAdminAccess}
                       type="button"
                       onClick={() => removeInvestment(item.id)}
                     >
@@ -2168,23 +2287,38 @@ export default function Home() {
                 <small>{leads.length} leads totais</small>
               </div>
               <div className="company-report-list">
-                {companyTotals.map((company) => (
-                  <button
-                    className={`company-report ${
-                      activeCompany === company.key ? "selected" : ""
-                    }`}
-                    key={company.key}
-                    onClick={() => changeCompany(company.key)}
-                    style={{ "--company-accent": company.accent } as CSSProperties}
-                    type="button"
-                  >
-                    <strong>{company.shortName}</strong>
-                    <span>{company.count} leads</span>
-                    <small>{company.open} abertos</small>
-                    <small>{company.won} ganhos</small>
-                    <em>{currency.format(company.value)}</em>
-                  </button>
-                ))}
+                {companyTotals.map((company) => {
+                  const allowed = companyIsAllowed(permission, company.key);
+
+                  return (
+                    <button
+                      className={`company-report ${
+                        activeCompany === company.key ? "selected" : ""
+                      } ${allowed ? "" : "locked"}`}
+                      disabled={!allowed}
+                      key={company.key}
+                      onClick={() => changeCompany(company.key)}
+                      style={{ "--company-accent": company.accent } as CSSProperties}
+                      type="button"
+                      title={allowed ? company.name : "Relatorio bloqueado para este usuario"}
+                    >
+                      <strong>{company.shortName}</strong>
+                      {allowed ? (
+                        <>
+                          <span>{company.count} leads</span>
+                          <small>{company.open} abertos</small>
+                          <small>{company.won} ganhos</small>
+                          <em>{currency.format(company.value)}</em>
+                        </>
+                      ) : (
+                        <>
+                          <span className="locked-text">Bloqueado</span>
+                          <span className="lock-icon" aria-hidden="true" />
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </article>
           </section>
@@ -2211,15 +2345,18 @@ export default function Home() {
                 Empresa
                 <select
                   value={form.company}
+                  disabled={!hasAdminAccess}
                   onChange={(event) =>
                     setForm({ ...form, company: event.target.value as CompanyKey })
                   }
                 >
-                  {companies.map((company) => (
-                    <option key={company.key} value={company.key}>
-                      {company.name}
-                    </option>
-                  ))}
+                  {companies
+                    .filter((company) => companyIsAllowed(permission, company.key))
+                    .map((company) => (
+                      <option key={company.key} value={company.key}>
+                        {company.name}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label>

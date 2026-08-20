@@ -3,6 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 export type CrmSnapshot = {
   leads: unknown[];
   investments: unknown[];
+  permission: CrmUserPermission;
+};
+
+export type CrmUserPermission = {
+  role: "admin" | "empresa";
+  companyKey: string | null;
+  allowedCompanies: string[];
+  email: string | null;
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -22,6 +30,13 @@ export const supabase = supabaseEnabled
       },
     })
   : null;
+
+const adminPermission: CrmUserPermission = {
+  role: "admin",
+  companyKey: null,
+  allowedCompanies: ["baltt", "vale", "baltec"],
+  email: null,
+};
 
 function loginToEmail(login: string) {
   const normalizedLogin = login.trim();
@@ -53,7 +68,54 @@ export async function signOutCrm() {
   if (error) throw error;
 }
 
-export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
+function normalizePermission(raw: unknown): CrmUserPermission {
+  if (!raw || typeof raw !== "object") return adminPermission;
+
+  const value = raw as Record<string, unknown>;
+  const role = value.role === "empresa" ? "empresa" : "admin";
+  const companyKey =
+    typeof value.companyKey === "string"
+      ? value.companyKey
+      : typeof value.company_key === "string"
+        ? value.company_key
+        : null;
+  const allowedCompanies = Array.isArray(value.allowedCompanies)
+    ? value.allowedCompanies.filter((item): item is string => typeof item === "string")
+    : Array.isArray(value.allowed_companies)
+      ? value.allowed_companies.filter((item): item is string => typeof item === "string")
+      : role === "admin"
+        ? adminPermission.allowedCompanies
+        : companyKey
+          ? [companyKey]
+          : [];
+
+  return {
+    role,
+    companyKey,
+    allowedCompanies,
+    email: typeof value.email === "string" ? value.email : null,
+  };
+}
+
+function normalizeSnapshotPayload(raw: unknown): CrmSnapshot {
+  const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+
+  return {
+    leads: Array.isArray(value.leads) ? value.leads : [],
+    investments: Array.isArray(value.investments) ? value.investments : [],
+    permission: normalizePermission(value.permission),
+  };
+}
+
+function isMissingRpc(error: { code?: string; message?: string }) {
+  return (
+    error.code === "PGRST202" ||
+    error.message?.includes("load_crm_snapshot_for_user") ||
+    error.message?.includes("save_crm_snapshot_for_user")
+  );
+}
+
+async function loadCrmSnapshotFromTable(): Promise<CrmSnapshot | null> {
   if (!supabase) return null;
 
   const { data, error } = await supabase
@@ -68,10 +130,22 @@ export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
   return {
     leads: Array.isArray(data.leads) ? data.leads : [],
     investments: Array.isArray(data.investments) ? data.investments : [],
+    permission: adminPermission,
   };
 }
 
-export async function saveCrmSnapshot(snapshot: CrmSnapshot) {
+export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user");
+
+  if (!error) return normalizeSnapshotPayload(data);
+  if (isMissingRpc(error)) return loadCrmSnapshotFromTable();
+
+  throw error;
+}
+
+async function saveCrmSnapshotToTable(snapshot: Pick<CrmSnapshot, "leads" | "investments">) {
   if (!supabase) return;
 
   const { error } = await supabase.from("crm_snapshots").upsert({
@@ -82,4 +156,21 @@ export async function saveCrmSnapshot(snapshot: CrmSnapshot) {
   });
 
   if (error) throw error;
+}
+
+export async function saveCrmSnapshot(snapshot: Pick<CrmSnapshot, "leads" | "investments">) {
+  if (!supabase) return;
+
+  const { error } = await supabase.rpc("save_crm_snapshot_for_user", {
+    p_leads: snapshot.leads,
+    p_investments: snapshot.investments,
+  });
+
+  if (!error) return;
+  if (isMissingRpc(error)) {
+    await saveCrmSnapshotToTable(snapshot);
+    return;
+  }
+
+  throw error;
 }
