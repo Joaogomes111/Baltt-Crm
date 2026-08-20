@@ -107,6 +107,15 @@ function normalizeSnapshotPayload(raw: unknown): CrmSnapshot {
   };
 }
 
+async function getAuthenticatedEmail() {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.auth.getUser();
+  if (error) return null;
+
+  return data.user?.email ?? null;
+}
+
 function isMissingRpc(error: { code?: string; message?: string }) {
   return (
     error.code === "PGRST202" ||
@@ -137,7 +146,10 @@ async function loadCrmSnapshotFromTable(): Promise<CrmSnapshot | null> {
 export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
   if (!supabase) return null;
 
-  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user");
+  const email = await getAuthenticatedEmail();
+  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user", {
+    p_email: email,
+  });
 
   if (!error) return normalizeSnapshotPayload(data);
   if (isMissingRpc(error)) return loadCrmSnapshotFromTable();
@@ -161,9 +173,11 @@ async function saveCrmSnapshotToTable(snapshot: Pick<CrmSnapshot, "leads" | "inv
 export async function saveCrmSnapshot(snapshot: Pick<CrmSnapshot, "leads" | "investments">) {
   if (!supabase) return;
 
+  const email = await getAuthenticatedEmail();
   const { error } = await supabase.rpc("save_crm_snapshot_for_user", {
     p_leads: snapshot.leads,
     p_investments: snapshot.investments,
+    p_email: email,
   });
 
   if (!error) return;
