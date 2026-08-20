@@ -120,7 +120,9 @@ function isMissingRpc(error: { code?: string; message?: string }) {
   return (
     error.code === "PGRST202" ||
     error.message?.includes("load_crm_snapshot_for_user") ||
-    error.message?.includes("save_crm_snapshot_for_user")
+    error.message?.includes("load_crm_snapshot_for_user_v2") ||
+    error.message?.includes("save_crm_snapshot_for_user") ||
+    error.message?.includes("save_crm_snapshot_for_user_v2")
   );
 }
 
@@ -147,7 +149,7 @@ export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
   if (!supabase) return null;
 
   const email = await getAuthenticatedEmail();
-  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user", {
+  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user_v2", {
     p_email: email,
   });
 
@@ -174,7 +176,7 @@ export async function saveCrmSnapshot(snapshot: Pick<CrmSnapshot, "leads" | "inv
   if (!supabase) return;
 
   const email = await getAuthenticatedEmail();
-  const { error } = await supabase.rpc("save_crm_snapshot_for_user", {
+  const { error } = await supabase.rpc("save_crm_snapshot_for_user_v2", {
     p_leads: snapshot.leads,
     p_investments: snapshot.investments,
     p_email: email,
