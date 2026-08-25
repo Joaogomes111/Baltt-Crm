@@ -149,6 +149,8 @@ const sources = [
   "Outro",
 ];
 
+const chartColors = ["#2f8f6f", "#2d72b8", "#f6b21a", "#8b5cf6", "#ef6f4e", "#14b8a6"];
+
 const lossReasons = [
   "",
   "Preco",
@@ -622,6 +624,19 @@ function formatDate(date: string) {
     day: "2-digit",
     month: "short",
   }).format(new Date(`${normalizedDate}T12:00:00`));
+}
+
+function formatMonthKey(key: string) {
+  if (key === "sem-data") return "Sem data";
+
+  const [year, month] = key.split("-").map(Number);
+  if (!year || !month) return key;
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    month: "short",
+  })
+    .format(new Date(year, month - 1, 1))
+    .replace(".", "");
 }
 
 function dateTimeValue(date: string) {
@@ -1252,6 +1267,115 @@ export default function Home() {
       };
     });
   }, [leads]);
+
+  const monthlyReport = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        leads: number;
+        proposals: number;
+        won: number;
+        value: number;
+      }
+    >();
+
+    companyLeads.forEach((lead) => {
+      const normalizedDate = normalizeDate(lead.arrivalDate);
+      const key = normalizedDate ? normalizedDate.slice(0, 7) : "sem-data";
+      const current =
+        grouped.get(key) ??
+        {
+          key,
+          label: formatMonthKey(key),
+          leads: 0,
+          proposals: 0,
+          won: 0,
+          value: 0,
+        };
+
+      current.leads += 1;
+      current.proposals += lead.stage === "proposta" ? 1 : 0;
+      current.won += lead.stage === "ganho" ? 1 : 0;
+      current.value += lead.proposalValue;
+      grouped.set(key, current);
+    });
+
+    return Array.from(grouped.values())
+      .sort((first, second) => first.key.localeCompare(second.key))
+      .slice(-7);
+  }, [companyLeads]);
+
+  const wonCount = stageTotals.find((stage) => stage.key === "ganho")?.count ?? 0;
+  const averageTicket = wonCount > 0 ? metrics.wonValue / wonCount : 0;
+  const monthlyMaxLeads = Math.max(...monthlyReport.map((item) => item.leads), 1);
+  const sourceTotalCount = Math.max(
+    sourceTotals.reduce((sum, item) => sum + item.count, 0),
+    1,
+  );
+  const sourceSlices = sourceTotals.slice(0, 6).map((item, index) => ({
+    ...item,
+    color: chartColors[index % chartColors.length],
+    percent: Math.round((item.count / sourceTotalCount) * 100),
+  }));
+  const sourceGradient =
+    sourceSlices.length > 0
+      ? `conic-gradient(${sourceSlices
+          .reduce<Array<{ color: string; start: number; end: number }>>(
+            (segments, item) => {
+              const start = segments.at(-1)?.end ?? 0;
+              const end = start + (item.count / sourceTotalCount) * 100;
+              return [...segments, { color: item.color, start, end }];
+            },
+            [],
+          )
+          .map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`)
+          .join(", ")})`
+      : "conic-gradient(#26384f 0% 100%)";
+  const revenueChart = useMemo(() => {
+    const chartWidth = 640;
+    const chartHeight = 250;
+    const paddingX = 34;
+    const paddingY = 30;
+    const rows =
+      monthlyReport.length > 0
+        ? monthlyReport
+        : [
+            {
+              key: "sem-data",
+              label: "Sem dados",
+              leads: 0,
+              proposals: 0,
+              won: 0,
+              value: 0,
+            },
+          ];
+    const maxValue = Math.max(...rows.map((item) => item.value), 1);
+    const step =
+      rows.length > 1
+        ? (chartWidth - paddingX * 2) / (rows.length - 1)
+        : 0;
+    const points = rows.map((item, index) => {
+      const x = rows.length > 1 ? paddingX + index * step : chartWidth / 2;
+      const y =
+        chartHeight -
+        paddingY -
+        (item.value / maxValue) * (chartHeight - paddingY * 2);
+
+      return { ...item, x, y };
+    });
+    const line = points.map((point) => `${point.x},${point.y}`).join(" ");
+    const area =
+      points.length > 0
+        ? `M ${points[0].x} ${chartHeight - paddingY} L ${line.replaceAll(
+            " ",
+            " L ",
+          )} L ${points[points.length - 1].x} ${chartHeight - paddingY} Z`
+        : "";
+
+    return { width: chartWidth, height: chartHeight, points, line, area };
+  }, [monthlyReport]);
 
   const activeViewTitle =
     activeView === "funis"
@@ -2304,111 +2428,254 @@ export default function Home() {
         ) : null}
 
         {activeView === "relatorios" ? (
-          <section className="report-grid" aria-label="Relatorios">
-            <article className="summary-panel">
-              <div className="panel-heading">
-                <span>Etapas do funil</span>
-                <small>{activeCompanyData.shortName}</small>
+          <section className="analytics-dashboard" aria-label="Relatorios">
+            <header className="analytics-hero">
+              <div>
+                <p className="eyebrow">Dashboard comercial</p>
+                <h2>{activeCompanyData.shortName} Performance</h2>
+                <span>{activeCompanyData.focus}</span>
               </div>
-              <div className="stage-bars">
-                {stageTotals.map((stage) => (
-                  <div className="stage-bar" key={stage.key}>
-                    <span>{stage.label}</span>
-                    <div>
-                      <i
-                        style={{
-                          width: `${Math.max(8, (stage.count / stageMaxCount) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <strong>{stage.count}</strong>
+              <div className="analytics-hero-stats">
+                <strong>{currency.format(investmentTotal)}</strong>
+                <span>Investimento total</span>
+                <small>{currency.format(leadCost)} por lead</small>
+              </div>
+            </header>
+
+            <div className="analytics-kpi-grid">
+              <article className="analytics-kpi">
+                <span>Leads no funil</span>
+                <strong>{metrics.total}</strong>
+                <small>{metrics.pipeline} em andamento</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Propostas abertas</span>
+                <strong>{currency.format(metrics.proposalValue)}</strong>
+                <small>{metrics.qualified}% qualificados</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Vendas fechadas</span>
+                <strong>{currency.format(metrics.wonValue)}</strong>
+                <small>{wonCount} negocios ganhos</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Conversao</span>
+                <strong>{metrics.conversion}%</strong>
+                <small>{currency.format(averageTicket)} ticket medio</small>
+              </article>
+            </div>
+
+            <div className="analytics-main-grid">
+              <article className="analytics-card analytics-card-wide">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Evolucao de receita</span>
+                    <small>Valor em proposta e vendas por mes</small>
                   </div>
-                ))}
-              </div>
-            </article>
+                  <strong>{currency.format(metrics.proposalValue + metrics.wonValue)}</strong>
+                </div>
 
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Origem dos leads</span>
-                <small>{companyLeads.length} leads</small>
-              </div>
-              <div className="report-list">
-                {sourceTotals.map((item) => (
-                  <div className="report-row" key={item.source}>
-                    <div>
-                      <strong>{item.source}</strong>
-                      <small>{currency.format(item.value)}</small>
-                    </div>
-                    <span>{item.count}</span>
+                <div className="line-chart-shell">
+                  <svg
+                    className="line-chart"
+                    role="img"
+                    aria-label="Grafico de evolucao de receita"
+                    viewBox={`0 0 ${revenueChart.width} ${revenueChart.height}`}
+                  >
+                    <defs>
+                      <linearGradient id="revenueArea" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#f6b21a" stopOpacity="0.38" />
+                        <stop offset="100%" stopColor="#f6b21a" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path className="line-chart-area" d={revenueChart.area} />
+                    <polyline className="line-chart-line" points={revenueChart.line} />
+                    {revenueChart.points.map((point) => (
+                      <circle
+                        className="line-chart-point"
+                        cx={point.x}
+                        cy={point.y}
+                        key={`${point.key}-${point.label}`}
+                        r="5"
+                      >
+                        <title>
+                          {point.label}: {currency.format(point.value)}
+                        </title>
+                      </circle>
+                    ))}
+                  </svg>
+
+                  <div className="chart-labels">
+                    {revenueChart.points.map((point) => (
+                      <span key={point.key}>{point.label}</span>
+                    ))}
                   </div>
-                ))}
-                {sourceTotals.length === 0 ? (
-                  <div className="empty-table">Sem origem registrada</div>
-                ) : null}
-              </div>
-            </article>
+                </div>
+              </article>
 
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Motivos de perda</span>
-                <small>{metrics.lost} perdidos</small>
-              </div>
-              <div className="report-list">
-                {lossTotals.map((item) => (
-                  <div className="report-row" key={item.reason}>
-                    <div>
-                      <strong>{item.reason}</strong>
-                      <small>Leads perdidos</small>
-                    </div>
-                    <span>{item.count}</span>
+              <article className="analytics-card source-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Origem dos leads</span>
+                    <small>{companyLeads.length} leads rastreados</small>
                   </div>
-                ))}
-                {lossTotals.length === 0 ? (
-                  <div className="empty-table">Sem perdas registradas</div>
-                ) : null}
-              </div>
-            </article>
+                </div>
 
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Visao por empresa</span>
-                <small>{leads.length} leads totais</small>
-              </div>
-              <div className="company-report-list">
-                {companyTotals.map((company) => {
-                  const allowed = companyIsAllowed(permission, company.key);
+                <div
+                  className="donut-chart"
+                  style={{ "--donut": sourceGradient } as CSSProperties}
+                >
+                  <div>
+                    <strong>{sourceSlices[0]?.percent ?? 0}%</strong>
+                    <span>{sourceSlices[0]?.source ?? "Sem dados"}</span>
+                  </div>
+                </div>
 
-                  return (
-                    <button
-                      className={`company-report ${
-                        activeCompany === company.key ? "selected" : ""
-                      } ${allowed ? "" : "locked"}`}
-                      disabled={!allowed}
-                      key={company.key}
-                      onClick={() => changeCompany(company.key)}
-                      style={{ "--company-accent": company.accent } as CSSProperties}
-                      type="button"
-                      title={allowed ? company.name : "Relatorio bloqueado para este usuario"}
-                    >
-                      <strong>{company.shortName}</strong>
-                      {allowed ? (
-                        <>
-                          <span>{company.count} leads</span>
-                          <small>{company.open} abertos</small>
-                          <small>{company.won} ganhos</small>
-                          <em>{currency.format(company.value)}</em>
-                        </>
-                      ) : (
-                        <>
-                          <span className="locked-text">Bloqueado</span>
-                          <span className="lock-icon" aria-hidden="true" />
-                        </>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </article>
+                <div className="source-legend">
+                  {sourceSlices.map((item) => (
+                    <div className="source-legend-row" key={item.source}>
+                      <i style={{ background: item.color }} />
+                      <span>{item.source}</span>
+                      <strong>{item.percent}%</strong>
+                    </div>
+                  ))}
+                  {sourceSlices.length === 0 ? (
+                    <div className="empty-dark">Sem origem registrada</div>
+                  ) : null}
+                </div>
+              </article>
+            </div>
+
+            <div className="analytics-bottom-grid">
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Volume mensal</span>
+                    <small>Leads recebidos nos ultimos meses</small>
+                  </div>
+                </div>
+
+                <div className="monthly-bars">
+                  {(monthlyReport.length > 0
+                    ? monthlyReport
+                    : [
+                        {
+                          key: "sem-data",
+                          label: "Sem dados",
+                          leads: 0,
+                          proposals: 0,
+                          won: 0,
+                          value: 0,
+                        },
+                      ]
+                  ).map((item) => (
+                    <div className="monthly-bar-item" key={item.key}>
+                      <div>
+                        <i
+                          style={{
+                            height: `${Math.max(10, (item.leads / monthlyMaxLeads) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <strong>{item.leads}</strong>
+                      <span>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Etapas do funil</span>
+                    <small>Distribuicao dos cards atuais</small>
+                  </div>
+                </div>
+
+                <div className="funnel-bars">
+                  {stageTotals.map((stage) => (
+                    <div className="funnel-bar" data-tone={stage.tone} key={stage.key}>
+                      <div>
+                        <span>{stage.label}</span>
+                        <strong>{stage.count}</strong>
+                      </div>
+                      <small>
+                        <i
+                          style={{
+                            width: `${Math.max(5, (stage.count / stageMaxCount) * 100)}%`,
+                          }}
+                        />
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Motivos de perda</span>
+                    <small>{metrics.lost} leads perdidos</small>
+                  </div>
+                </div>
+
+                <div className="dark-list">
+                  {lossTotals.slice(0, 5).map((item) => (
+                    <div className="dark-list-row" key={item.reason}>
+                      <span>{item.reason}</span>
+                      <strong>{item.count}</strong>
+                    </div>
+                  ))}
+                  {lossTotals.length === 0 ? (
+                    <div className="empty-dark">Sem perdas registradas</div>
+                  ) : null}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Visao por empresa</span>
+                    <small>{leads.length} leads totais</small>
+                  </div>
+                </div>
+
+                <div className="company-dashboard-list">
+                  {companyTotals.map((company) => {
+                    const allowed = companyIsAllowed(permission, company.key);
+
+                    return (
+                      <button
+                        className={`company-dashboard-row ${
+                          activeCompany === company.key ? "selected" : ""
+                        } ${allowed ? "" : "locked"}`}
+                        disabled={!allowed}
+                        key={company.key}
+                        onClick={() => changeCompany(company.key)}
+                        style={{ "--company-accent": company.accent } as CSSProperties}
+                        title={
+                          allowed
+                            ? company.name
+                            : "Relatorio bloqueado para este usuario"
+                        }
+                        type="button"
+                      >
+                        <i />
+                        <span>{company.shortName}</span>
+                        {allowed ? (
+                          <>
+                            <strong>{company.count}</strong>
+                            <small>{company.won} ganhos</small>
+                          </>
+                        ) : (
+                          <small>Bloqueado</small>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </article>
+            </div>
           </section>
         ) : null}
       </section>
