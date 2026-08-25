@@ -581,16 +581,22 @@ textarea {
   display: grid;
   grid-template-columns: repeat(6, minmax(236px, 1fr));
   gap: 12px;
+  align-items: stretch;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-bottom: 8px;
 }
 
 .lane {
+  display: flex;
+  flex-direction: column;
   min-width: 236px;
-  min-height: 520px;
+  height: clamp(520px, 58vh, 680px);
+  min-height: 0;
   border: 1px solid rgba(15, 39, 66, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.76);
+  overflow: hidden;
 }
 
 .lane-header {
@@ -661,8 +667,32 @@ textarea {
 
 .lead-stack {
   display: grid;
+  align-content: start;
   gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+}
+
+.lead-stack::-webkit-scrollbar {
+  width: 8px;
+}
+
+.lead-stack::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lead-stack::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(15, 39, 66, 0.22);
+}
+
+.lead-stack::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 39, 66, 0.34);
 }
 
 .lead-card {
