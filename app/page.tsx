@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, WheelEvent } from "react";
 import {
   loadCrmSnapshot,
   saveCrmSnapshot,
@@ -15,6 +15,7 @@ import type { CrmUserPermission } from "../src/supabaseClient";
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
 type NavIconKey = "pipeline" | "leads" | "investment" | "reports";
+type DateFilterKey = "7" | "30" | "90" | "all" | "custom";
 type StageKey =
   | "novo"
   | "qualificado"
@@ -623,6 +624,38 @@ function formatDate(date: string) {
   }).format(new Date(`${normalizedDate}T12:00:00`));
 }
 
+function dateTimeValue(date: string) {
+  const normalizedDate = normalizeDate(date);
+  if (!normalizedDate) return null;
+
+  const timestamp = new Date(`${normalizedDate}T12:00:00`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function dateMatchesFilter(
+  date: string,
+  filter: DateFilterKey,
+  customStart: string,
+  customEnd: string,
+) {
+  if (filter === "all") return true;
+
+  if (filter === "custom") {
+    const leadTime = dateTimeValue(date);
+    if (leadTime === null) return false;
+
+    const startTime = customStart ? dateTimeValue(customStart) : null;
+    const endTime = customEnd ? dateTimeValue(customEnd) : null;
+
+    if (startTime !== null && leadTime < startTime) return false;
+    if (endTime !== null && leadTime > endTime) return false;
+
+    return true;
+  }
+
+  return daysSince(date) <= Number(filter);
+}
+
 function normalizePhone(phone: string) {
   return phone.replace(/\D/g, "");
 }
@@ -866,7 +899,9 @@ export default function Home() {
   const [activeView, setActiveView] = useState<ViewKey>("funis");
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("Todas");
-  const [dateFilter, setDateFilter] = useState("90");
+  const [dateFilter, setDateFilter] = useState<DateFilterKey>("90");
+  const [customDateStart, setCustomDateStart] = useState("");
+  const [customDateEnd, setCustomDateEnd] = useState("");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
@@ -1076,15 +1111,27 @@ export default function Home() {
       })
       .filter((lead) => sourceFilter === "Todas" || lead.source === sourceFilter)
       .filter((lead) => {
-        if (dateFilter === "all") return true;
-        return daysSince(lead.arrivalDate) <= Number(dateFilter);
+        return dateMatchesFilter(
+          lead.arrivalDate,
+          dateFilter,
+          customDateStart,
+          customDateEnd,
+        );
       })
       .sort((a, b) => {
         const first = new Date(a.arrivalDate).getTime();
         const second = new Date(b.arrivalDate).getTime();
         return sortOrder === "desc" ? second - first : first - second;
       });
-  }, [companyLeads, query, sourceFilter, dateFilter, sortOrder]);
+  }, [
+    companyLeads,
+    query,
+    sourceFilter,
+    dateFilter,
+    customDateStart,
+    customDateEnd,
+    sortOrder,
+  ]);
 
   const selectedLead = useMemo(
     () => {
@@ -1226,6 +1273,23 @@ export default function Home() {
     setSelectedLeadId(
       leads.find((lead) => lead.company === companyKey)?.id ?? null,
     );
+  }
+
+  function handleLeadStackWheel(event: WheelEvent<HTMLDivElement>) {
+    const stack = event.currentTarget;
+    const canScroll = stack.scrollHeight > stack.clientHeight + 1;
+
+    if (!canScroll) return;
+
+    const atTop = stack.scrollTop <= 0;
+    const atBottom =
+      stack.scrollTop + stack.clientHeight >= stack.scrollHeight - 1;
+    const scrollingUp = event.deltaY < 0;
+    const scrollingDown = event.deltaY > 0;
+
+    if ((scrollingUp && atTop) || (scrollingDown && atBottom)) return;
+
+    event.stopPropagation();
   }
 
   function addInvestment(event: FormEvent<HTMLFormElement>) {
@@ -1734,14 +1798,37 @@ export default function Home() {
               Entrada
               <select
                 value={dateFilter}
-                onChange={(event) => setDateFilter(event.target.value)}
+                onChange={(event) =>
+                  setDateFilter(event.target.value as DateFilterKey)
+                }
               >
                 <option value="7">Ultimos 7 dias</option>
                 <option value="30">Ultimos 30 dias</option>
                 <option value="90">Ultimos 90 dias</option>
+                <option value="custom">Personalizado</option>
                 <option value="all">Todos</option>
               </select>
             </label>
+            {dateFilter === "custom" ? (
+              <>
+                <label className="date-field">
+                  De
+                  <input
+                    type="date"
+                    value={customDateStart}
+                    onChange={(event) => setCustomDateStart(event.target.value)}
+                  />
+                </label>
+                <label className="date-field">
+                  Ate
+                  <input
+                    type="date"
+                    value={customDateEnd}
+                    onChange={(event) => setCustomDateEnd(event.target.value)}
+                  />
+                </label>
+              </>
+            ) : null}
             <label>
               Ordenar
               <select
@@ -1784,7 +1871,7 @@ export default function Home() {
                     <small>{stageLeads.length}</small>
                   </header>
 
-                  <div className="lead-stack">
+                  <div className="lead-stack" onWheel={handleLeadStackWheel}>
                     {stageLeads.map((lead) => {
                       const company = getCompany(lead.company);
                       const stale = daysSince(lead.arrivalDate) > 10 && !["ganho", "perdido"].includes(lead.stage);
