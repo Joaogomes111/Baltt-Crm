@@ -1098,9 +1098,11 @@ export default function Home() {
   }, [activeView, selectedLeadId]);
 
   const activeCompanyData = getCompany(activeCompany);
-  const activeViewData =
-    navItems.find((item) => item.key === activeView) ?? navItems[0];
   const hasAdminAccess = permission.role === "admin";
+  const activeViewKey: ViewKey =
+    activeView === "investimento" && !hasAdminAccess ? "funis" : activeView;
+  const activeViewData =
+    navItems.find((item) => item.key === activeViewKey) ?? navItems[0];
   const activeCompanyAllowed = companyIsAllowed(permission, activeCompany);
 
   const companyLeads = useMemo(
@@ -1474,21 +1476,22 @@ export default function Home() {
     return { width: chartWidth, height: chartHeight, points, line, area };
   }, [reportMonthlyReport]);
 
-  const headerMetrics = activeView === "relatorios" ? reportMetrics : metrics;
-  const headerLeadCost = activeView === "relatorios" ? reportLeadCost : leadCost;
+  const headerMetrics = activeViewKey === "relatorios" ? reportMetrics : metrics;
+  const headerLeadCost =
+    activeViewKey === "relatorios" ? reportLeadCost : leadCost;
 
   const activeViewTitle =
-    activeView === "funis"
+    activeViewKey === "funis"
       ? activeCompanyData.name
-      : activeView === "relatorios"
+      : activeViewKey === "relatorios"
         ? `${activeViewData.label} - ${reportScopeLabel}`
         : `${activeViewData.label} - ${activeCompanyData.shortName}`;
   const activeViewSubtitle =
-    activeView === "funis"
+    activeViewKey === "funis"
       ? activeCompanyData.focus
-      : activeView === "leads"
+      : activeViewKey === "leads"
         ? `${tableLeads.length} leads filtrados de ${companyLeads.length} no total`
-        : activeView === "investimento"
+        : activeViewKey === "investimento"
           ? `${currency.format(investmentTotal)} em Meta Ads e Google Ads`
           : `${reportMetrics.conversion}% conversao e ${reportMetrics.qualified}% qualificados`;
 
@@ -1903,20 +1906,37 @@ export default function Home() {
         </div>
 
         <nav className="nav-list" aria-label="Areas do CRM">
-          {navItems.map((item) => (
-            <button
-              className={`nav-item ${activeView === item.key ? "active" : ""}`}
-              key={item.key}
-              onClick={() => setActiveView(item.key)}
-              type="button"
-              title={item.label}
-            >
-              <span className="nav-icon">
-                <NavPictogram icon={item.icon} />
-              </span>
-              {item.label}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const lockedNavItem = item.key === "investimento" && !hasAdminAccess;
+
+            return (
+              <button
+                className={`nav-item ${activeViewKey === item.key ? "active" : ""} ${
+                  lockedNavItem ? "locked" : ""
+                }`}
+                disabled={lockedNavItem}
+                key={item.key}
+                onClick={() => {
+                  if (lockedNavItem) return;
+                  setActiveView(item.key);
+                }}
+                type="button"
+                title={
+                  lockedNavItem
+                    ? "Investimento liberado apenas para admin"
+                    : item.label
+                }
+              >
+                <span className="nav-icon">
+                  <NavPictogram icon={item.icon} />
+                </span>
+                {item.label}
+                {lockedNavItem ? (
+                  <span className="lock-icon nav-lock" aria-hidden="true" />
+                ) : null}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="company-panel">
@@ -1955,7 +1975,7 @@ export default function Home() {
         <header className="topbar">
           <div>
             <p className="eyebrow">
-              {activeView === "funis" ? "Funil por empresa" : activeViewData.label}
+              {activeViewKey === "funis" ? "Funil por empresa" : activeViewData.label}
             </p>
             <h1>{activeViewTitle}</h1>
             <span>{activeViewSubtitle}</span>
@@ -2029,7 +2049,7 @@ export default function Home() {
 
         <section className="control-strip">
           <div className="segmented" aria-label="Empresas">
-            {activeView === "relatorios" ? (
+            {activeViewKey === "relatorios" ? (
               <button
                 type="button"
                 className={reportScope === "all" ? "active" : ""}
@@ -2050,7 +2070,7 @@ export default function Home() {
             {companies.map((company) => {
               const allowed = companyIsAllowed(permission, company.key);
               const selected =
-                activeView === "relatorios"
+                activeViewKey === "relatorios"
                   ? reportScope !== "all" && reportScope === company.key
                   : activeCompany === company.key;
 
@@ -2061,7 +2081,7 @@ export default function Home() {
                   className={`${selected ? "active" : ""} ${allowed ? "" : "locked"}`}
                   disabled={!allowed}
                   onClick={() => {
-                    if (activeView === "relatorios") {
+                    if (activeViewKey === "relatorios") {
                       setReportScope(company.key);
                       return;
                     }
@@ -2071,7 +2091,7 @@ export default function Home() {
                   title={
                     allowed
                       ? company.name
-                      : activeView === "relatorios"
+                      : activeViewKey === "relatorios"
                         ? "Relatorio bloqueado para este usuario"
                         : "Funil bloqueado para este usuario"
                   }
@@ -2095,7 +2115,7 @@ export default function Home() {
                 ))}
               </select>
             </label>
-            {activeView === "leads" ? (
+            {activeViewKey === "leads" ? (
               <label>
                 Etapa
                 <select
@@ -2163,7 +2183,7 @@ export default function Home() {
           </div>
         </section>
 
-        {activeView === "funis" ? (
+        {activeViewKey === "funis" ? (
           <>
             <section className={`main-grid ${selectedLead ? "details-open" : "details-closed"}`}>
           <div className="board" aria-label={`Funil ${activeCompanyData.name}`}>
@@ -2390,7 +2410,7 @@ export default function Home() {
           </>
         ) : null}
 
-        {activeView === "leads" ? (
+        {activeViewKey === "leads" ? (
           <section className="content-card leads-view" aria-label="Lista de leads">
             <div className="panel-heading">
               <span>Leads cadastrados</span>
@@ -2485,7 +2505,7 @@ export default function Home() {
           </section>
         ) : null}
 
-        {activeView === "investimento" ? (
+        {activeViewKey === "investimento" ? (
           <section className="investment-view" aria-label="Investimento">
             <div className="investment-kpis">
               <article className="content-card compact-metric">
@@ -2658,7 +2678,7 @@ export default function Home() {
           </section>
         ) : null}
 
-        {activeView === "relatorios" ? (
+        {activeViewKey === "relatorios" ? (
           <section className="analytics-dashboard" aria-label="Relatorios">
             <header className="analytics-hero">
               <div>

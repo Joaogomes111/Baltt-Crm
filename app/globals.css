@@ -263,6 +263,22 @@ a {
   color: #fff;
 }
 
+.nav-item.locked {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.nav-item.locked:hover {
+  background: transparent;
+  color: #cbd8e5;
+}
+
+.nav-lock {
+  margin-left: auto;
+  color: #aebccc;
+  transform: scale(0.86);
+}
+
 .company-panel {
   margin-top: 18px;
 }
