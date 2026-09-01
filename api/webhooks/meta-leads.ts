@@ -349,6 +349,10 @@ function getLeadgenChanges(payload: { entry?: Array<{ changes?: MetaWebhookChang
     .filter((change) => change.field === "leadgen" && change.value?.leadgen_id);
 }
 
+function isMetaWebhookSampleLead(leadgenId: string) {
+  return /^4+$/.test(leadgenId);
+}
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url || "/", "https://baltt-crm.vercel.app");
@@ -387,14 +391,50 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const changes = getLeadgenChanges(payload);
     const results = [];
 
+    console.info("[meta-leads] webhook received", {
+      changes: changes.length,
+      userAgent: headerValue(req, "user-agent"),
+    });
+
     for (const change of changes) {
       const leadgenId = change.value?.leadgen_id;
       if (!leadgenId) continue;
 
-      const metaLead = await fetchMetaLead(leadgenId);
-      const crmLead = buildCrmLead(metaLead, change.value);
-      const result = await saveLeadToCrm(crmLead);
-      results.push({ leadgenId, company: crmLead.company, name: crmLead.name, ...result });
+      if (isMetaWebhookSampleLead(leadgenId)) {
+        console.info("[meta-leads] meta webhook sample skipped", {
+          leadgenId,
+          formId: change.value?.form_id,
+          pageId: change.value?.page_id,
+        });
+        results.push({ leadgenId, skipped: true, reason: "meta_webhook_sample" });
+        continue;
+      }
+
+      try {
+        const metaLead = await fetchMetaLead(leadgenId);
+        const crmLead = buildCrmLead(metaLead, change.value);
+        const result = await saveLeadToCrm(crmLead);
+        results.push({ leadgenId, company: crmLead.company, name: crmLead.name, ...result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Erro desconhecido.";
+        console.error("[meta-leads] failed to process lead", {
+          leadgenId,
+          formId: change.value?.form_id,
+          pageId: change.value?.page_id,
+          error: message,
+        });
+        results.push({ leadgenId, error: message });
+      }
+    }
+
+    const failed = results.some((result) => "error" in result);
+    if (failed) {
+      sendJson(res, 500, {
+        ok: false,
+        received: changes.length,
+        results,
+      });
+      return;
     }
 
     sendJson(res, 200, {
@@ -403,6 +443,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       results,
     });
   } catch (error) {
+    console.error("[meta-leads] webhook failed", {
+      error: error instanceof Error ? error.message : "Erro desconhecido.",
+    });
     sendJson(res, 500, {
       ok: false,
       error: error instanceof Error ? error.message : "Erro desconhecido.",
