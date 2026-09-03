@@ -159,6 +159,10 @@ function payloadFields(payload: Record<string, unknown>) {
   return { flattened, normalized };
 }
 
+function requestFieldsFromUrl(requestUrl: URL) {
+  return Object.fromEntries(requestUrl.searchParams.entries()) as Record<string, string>;
+}
+
 function pickField(fields: ReturnType<typeof payloadFields>, aliases: string[]) {
   for (const alias of aliases) {
     const value = fields.normalized[normalizeKey(alias)];
@@ -369,6 +373,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const requestUrl = new URL(req.url || "/", "https://baltt-crm.vercel.app");
     const rawBody = await readRawBody(req);
     const payload = parsePayload(rawBody, headerValue(req, "content-type") || "");
+    const mergedPayload = { ...requestFieldsFromUrl(requestUrl), ...payload };
     const expectedToken = process.env.SITE_LEADS_WEBHOOK_TOKEN;
 
     if (!expectedToken) {
@@ -382,7 +387,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     }
 
-    const crmLead = buildCrmLead(payload, requestUrl);
+    const crmLead = buildCrmLead(mergedPayload, requestUrl);
     const result = await saveLeadToCrm(crmLead);
 
     console.info("[site-leads] lead received", {
