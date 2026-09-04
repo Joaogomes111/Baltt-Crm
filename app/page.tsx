@@ -151,6 +151,8 @@ const sources = [
   "Orcamento direto",
   "Outro",
 ];
+const emptySourceLabel = "Sem origem";
+const sourceFilterOptions = [...sources, emptySourceLabel];
 
 const chartColors = ["#2f8f6f", "#2d72b8", "#f6b21a", "#8b5cf6", "#ef6f4e", "#14b8a6"];
 
@@ -674,6 +676,23 @@ function dateMatchesFilter(
   return daysSince(date) <= Number(filter);
 }
 
+function sourceFilterValue(source: string) {
+  const normalizedSource = source.trim();
+  return normalizedSource && sources.includes(normalizedSource)
+    ? normalizedSource
+    : emptySourceLabel;
+}
+
+function sourceMatchesFilter(
+  lead: Pick<Lead, "source">,
+  selectedSources: string[],
+) {
+  return (
+    selectedSources.length === 0 ||
+    selectedSources.includes(sourceFilterValue(lead.source))
+  );
+}
+
 function normalizePhone(phone: string) {
   return phone.replace(/\D/g, "");
 }
@@ -916,7 +935,7 @@ export default function Home() {
   const [activeCompany, setActiveCompany] = useState<CompanyKey>("baltt");
   const [activeView, setActiveView] = useState<ViewKey>("funis");
   const [query, setQuery] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("Todas");
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
   const [dateFilter, setDateFilter] = useState<DateFilterKey>("90");
   const [customDateStart, setCustomDateStart] = useState("");
   const [customDateEnd, setCustomDateEnd] = useState("");
@@ -1133,7 +1152,7 @@ export default function Home() {
           .toLowerCase();
         return searchable.includes(normalizedQuery);
       })
-      .filter((lead) => sourceFilter === "Todas" || lead.source === sourceFilter)
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
       .filter((lead) => {
         return dateMatchesFilter(
           lead.arrivalDate,
@@ -1150,7 +1169,7 @@ export default function Home() {
   }, [
     companyLeads,
     query,
-    sourceFilter,
+    sourceFilters,
     dateFilter,
     customDateStart,
     customDateEnd,
@@ -1240,9 +1259,38 @@ export default function Home() {
   const leadCost =
     metrics.total > 0 ? investmentTotal / Math.max(metrics.total, 1) : 0;
 
+  const reportFilteredAllowedLeads = useMemo(() => {
+    return leads
+      .filter((lead) => companyIsAllowed(permission, lead.company))
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
+      .filter((lead) =>
+        dateMatchesFilter(
+          lead.arrivalDate,
+          dateFilter,
+          customDateStart,
+          customDateEnd,
+        ),
+      )
+      .sort((a, b) => {
+        const first = new Date(a.arrivalDate).getTime();
+        const second = new Date(b.arrivalDate).getTime();
+        return sortOrder === "desc" ? second - first : first - second;
+      });
+  }, [
+    leads,
+    permission,
+    sourceFilters,
+    dateFilter,
+    customDateStart,
+    customDateEnd,
+    sortOrder,
+  ]);
+
   const companyTotals = useMemo(() => {
     return companies.map((company) => {
-      const items = leads.filter((lead) => lead.company === company.key);
+      const items = reportFilteredAllowedLeads.filter(
+        (lead) => lead.company === company.key,
+      );
       return {
         ...company,
         count: items.length,
@@ -1253,7 +1301,7 @@ export default function Home() {
         value: items.reduce((sum, lead) => sum + lead.proposalValue, 0),
       };
     });
-  }, [leads]);
+  }, [reportFilteredAllowedLeads]);
 
   const reportScopeIsAll = reportScope === "all" && hasAdminAccess;
   const reportCompanyKey = reportScope === "all" ? activeCompany : reportScope;
@@ -1267,14 +1315,22 @@ export default function Home() {
 
   const reportLeads = useMemo(() => {
     if (reportScope === "all" && hasAdminAccess) {
-      return leads.filter((lead) => companyIsAllowed(permission, lead.company));
+      return reportFilteredAllowedLeads;
     }
 
     const targetCompany = reportScope === "all" ? activeCompany : reportScope;
     if (!companyIsAllowed(permission, targetCompany)) return [];
 
-    return leads.filter((lead) => lead.company === targetCompany);
-  }, [activeCompany, hasAdminAccess, leads, permission, reportScope]);
+    return reportFilteredAllowedLeads.filter(
+      (lead) => lead.company === targetCompany,
+    );
+  }, [
+    activeCompany,
+    hasAdminAccess,
+    permission,
+    reportFilteredAllowedLeads,
+    reportScope,
+  ]);
 
   const reportStageTotals = useMemo(() => {
     return stages.map((stage) => ({
@@ -1495,6 +1551,11 @@ export default function Home() {
         : activeViewKey === "investimento"
           ? `${currency.format(investmentTotal)} em Meta Ads e Google Ads`
           : `${reportMetrics.conversion}% conversao e ${reportMetrics.qualified}% qualificados`;
+  const sourceFilterSummary = useMemo(() => {
+    if (sourceFilters.length === 0) return "Todas";
+    if (sourceFilters.length === 1) return sourceFilters[0];
+    return `${sourceFilters.length} origens`;
+  }, [sourceFilters]);
 
   function changeCompany(companyKey: CompanyKey) {
     if (!companyIsAllowed(permission, companyKey)) return;
@@ -1502,6 +1563,14 @@ export default function Home() {
     setActiveCompany(companyKey);
     setSelectedLeadId(
       leads.find((lead) => lead.company === companyKey)?.id ?? null,
+    );
+  }
+
+  function toggleSourceFilter(source: string) {
+    setSourceFilters((current) =>
+      current.includes(source)
+        ? current.filter((item) => item !== source)
+        : [...current, source],
     );
   }
 
@@ -2104,18 +2173,31 @@ export default function Home() {
             })}
           </div>
           <div className="filters">
-            <label>
-              Origem
-              <select
-                value={sourceFilter}
-                onChange={(event) => setSourceFilter(event.target.value)}
-              >
-                <option>Todas</option>
-                {sources.map((source) => (
-                  <option key={source}>{source}</option>
-                ))}
-              </select>
-            </label>
+            <div className="filter-group">
+              <span>Origem</span>
+              <details className="multi-select">
+                <summary>{sourceFilterSummary}</summary>
+                <div className="multi-select-menu">
+                  <button
+                    className={sourceFilters.length === 0 ? "active" : ""}
+                    type="button"
+                    onClick={() => setSourceFilters([])}
+                  >
+                    Todas
+                  </button>
+                  {sourceFilterOptions.map((source) => (
+                    <label className="multi-select-option" key={source}>
+                      <input
+                        type="checkbox"
+                        checked={sourceFilters.includes(source)}
+                        onChange={() => toggleSourceFilter(source)}
+                      />
+                      <span>{source}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            </div>
             {activeViewKey === "leads" ? (
               <label>
                 Etapa
@@ -2888,7 +2970,7 @@ export default function Home() {
                 <div className="analytics-card-heading">
                   <div>
                     <span>Visao por empresa</span>
-                    <small>{leads.length} leads totais</small>
+                    <small>{reportFilteredAllowedLeads.length} leads filtrados</small>
                   </div>
                 </div>
 
