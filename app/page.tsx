@@ -931,40 +931,44 @@ function MetricPictogram({ icon }: { icon: MetricIconKey }) {
       <svg fill="none" viewBox="0 0 24 24">
         {icon === "leads" ? (
           <>
-            <path d="M4 5h16l-6.2 7.2v5.2l-3.6 1.8v-7L4 5Z" />
-            <circle cx="17" cy="17" r="2.5" />
-            <path d="M13.7 21c.5-1.8 1.6-2.8 3.3-2.8s2.8 1 3.3 2.8" />
+            <path className="metric-pictogram-fill" d="M4.5 5.2h15l-5.8 6.6v4.5l-3.4 1.8v-6.3L4.5 5.2Z" />
+            <path d="M4.5 5.2h15l-5.8 6.6v4.5l-3.4 1.8v-6.3L4.5 5.2Z" />
+            <circle cx="17.2" cy="17.1" r="2.2" />
+            <path d="M14.1 21c.5-1.6 1.5-2.4 3.1-2.4s2.6.8 3.1 2.4" />
           </>
         ) : null}
         {icon === "proposal" ? (
           <>
-            <path d="M6 3.5h8l4 4v13H6z" />
-            <path d="M14 3.5v4h4" />
-            <path d="M9 11.5h5.5" />
-            <path d="M9 14.8h4" />
-            <path d="m14.6 18.2 2.8-2.8 1.5 1.5-2.8 2.8-2 .5.5-2Z" />
+            <path className="metric-pictogram-fill" d="M6.5 3.8h7.4l3.6 3.6v12.8h-11V3.8Z" />
+            <path d="M6.5 3.8h7.4l3.6 3.6v12.8h-11V3.8Z" />
+            <path d="M13.8 3.8v3.7h3.7" />
+            <path d="M9.2 11.2h5.4" />
+            <path d="M9.2 14.4h3.8" />
+            <path d="m14.3 18 2.7-2.7 1.4 1.4-2.7 2.7-1.9.5.5-1.9Z" />
           </>
         ) : null}
         {icon === "sale" ? (
           <>
-            <circle cx="12" cy="12" r="8" />
-            <path d="m8.2 12.2 2.4 2.4 5.2-5.4" />
-            <path d="M7.5 20h9" />
-            <path d="M12 20v-2.2" />
+            <ellipse cx="11.5" cy="6.6" rx="5.8" ry="2.4" />
+            <path className="metric-pictogram-fill" d="M5.7 6.6v7.5c0 1.3 2.6 2.4 5.8 2.4s5.8-1.1 5.8-2.4V6.6" />
+            <path d="M5.7 6.6v7.5c0 1.3 2.6 2.4 5.8 2.4s5.8-1.1 5.8-2.4V6.6" />
+            <path d="M5.7 10.4c0 1.3 2.6 2.4 5.8 2.4s5.8-1.1 5.8-2.4" />
+            <path d="m14.4 18 1.5 1.5 3.4-3.7" />
           </>
         ) : null}
         {icon === "cost" ? (
           <>
-            <rect x="5" y="3.5" width="14" height="17" rx="2" />
-            <path d="M8 7.5h8" />
-            <path d="M8 11h2" />
+            <rect className="metric-pictogram-fill" x="5.2" y="3.5" width="13.6" height="17" rx="2.3" />
+            <rect x="5.2" y="3.5" width="13.6" height="17" rx="2.3" />
+            <path d="M8.4 7.4h7.2" />
+            <path d="M8.4 11h2" />
             <path d="M12 11h2" />
-            <path d="M16 11h.1" />
-            <path d="M8 14.3h2" />
-            <path d="M12 14.3h2" />
-            <path d="M16 14.3h.1" />
-            <path d="M8 17.6h2" />
-            <path d="M12 17.6h4" />
+            <path d="M15.6 11h.1" />
+            <path d="M8.4 14.4h2" />
+            <path d="M12 14.4h2" />
+            <path d="M15.6 14.4h.1" />
+            <path d="M8.4 17.6h2" />
+            <path d="M12 17.6h3.7" />
           </>
         ) : null}
       </svg>

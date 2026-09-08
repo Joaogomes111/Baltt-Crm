@@ -2794,6 +2794,8 @@ select {
 
 .metric {
   position: relative;
+  display: grid;
+  align-content: start;
   min-height: 148px;
   padding: 24px;
   overflow: hidden;
@@ -2818,25 +2820,39 @@ select {
 }
 
 .metric-pictogram {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  margin-bottom: 18px;
+  position: relative;
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  margin: 0 0 16px;
+  overflow: hidden;
   place-items: center;
+  place-content: center;
   border-radius: 8px;
   border: 1px solid rgba(125, 181, 255, 0.2);
   background: rgba(47, 115, 255, 0.16);
   color: #7db5ff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  flex: 0 0 auto;
 }
 
 .metric-pictogram svg {
-  width: 23px;
-  height: 23px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: block;
+  width: 26px;
+  height: 26px;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
+  stroke-width: 1.9;
+  transform: translate(-50%, -50%);
+}
+
+.metric-pictogram-fill {
+  fill: currentColor;
+  fill-opacity: 0.14;
 }
 
 .metric-pictogram-proposal {
