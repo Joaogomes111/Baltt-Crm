@@ -1,4 +1,4 @@
-# Atualizacao CRM - filtros e relatorios
+# Atualizacao CRM - design dashboard moderno
 
 Subir estes arquivos substituindo os mesmos caminhos no projeto do CRM:
 
@@ -7,12 +7,18 @@ Subir estes arquivos substituindo os mesmos caminhos no projeto do CRM:
 
 O que muda:
 
-- O filtro **Origem** agora permite selecionar mais de uma origem ao mesmo tempo.
-- A tela **Relatorios** agora respeita os filtros de origem, entrada/data e ordenacao.
-- A visao por empresa nos relatorios tambem passa a mostrar os leads filtrados.
+- CRM inteiro redesenhado para um visual dark premium inspirado no dashboard de referencia.
+- Sidebar, topo, cards de metricas, funis, lista de leads, investimentos, relatorios e modal de lead seguem o novo estilo.
+- Sidebar ganhou botao para recolher/expandir.
+- Mantidas as correcoes recentes de filtros, relatorios e origem `Nao informado`.
+- Nenhuma dependencia nova foi adicionada.
 
 Validado com:
 
 - `npm run build`
 - `npm test`
 - `npm run lint`
+
+Testado localmente em:
+
+- `http://127.0.0.1:5174/`

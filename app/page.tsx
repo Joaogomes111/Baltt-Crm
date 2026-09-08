@@ -153,6 +153,15 @@ const sources = [
 ];
 const emptySourceLabel = "Sem origem";
 const sourceFilterOptions = [...sources, emptySourceLabel];
+const sourceFormEmptyLabel = "Nao informado";
+const sourceFormOptions = [...sources, sourceFormEmptyLabel];
+const sourceAliases = [...sourceFilterOptions, sourceFormEmptyLabel].reduce<
+  Record<string, string>
+>((aliases, source) => {
+  aliases[normalizeSourceKey(source)] =
+    source === sourceFormEmptyLabel ? emptySourceLabel : source;
+  return aliases;
+}, {});
 
 const chartColors = ["#2f8f6f", "#2d72b8", "#f6b21a", "#8b5cf6", "#ef6f4e", "#14b8a6"];
 
@@ -508,7 +517,7 @@ function leadToForm(lead: Lead): LeadForm {
     email: lead.email,
     city: lead.city,
     neighborhood: lead.neighborhood,
-    source: lead.source,
+    source: sourceDisplayValue(lead.source),
     campaign: lead.campaign,
     service: lead.service,
     customerType: lead.customerType,
@@ -676,11 +685,24 @@ function dateMatchesFilter(
   return daysSince(date) <= Number(filter);
 }
 
+function normalizeSourceKey(source: string) {
+  return source
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function sourceFilterValue(source: string) {
-  const normalizedSource = source.trim();
-  return normalizedSource && sources.includes(normalizedSource)
-    ? normalizedSource
-    : emptySourceLabel;
+  const sourceKey = normalizeSourceKey(source);
+  if (!sourceKey) return emptySourceLabel;
+
+  return sourceAliases[sourceKey] ?? source.trim();
+}
+
+function sourceDisplayValue(source: string) {
+  const sourceValue = sourceFilterValue(source);
+  return sourceValue === emptySourceLabel ? sourceFormEmptyLabel : sourceValue;
 }
 
 function sourceMatchesFilter(
@@ -939,6 +961,7 @@ export default function Home() {
   const [dateFilter, setDateFilter] = useState<DateFilterKey>("90");
   const [customDateStart, setCustomDateStart] = useState("");
   const [customDateEnd, setCustomDateEnd] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [leadStageFilter, setLeadStageFilter] =
     useState<LeadStageFilterKey>("all");
   const [reportScope, setReportScope] = useState<ReportScopeKey>("all");
@@ -1375,29 +1398,23 @@ export default function Home() {
   }, [reportLeads]);
 
   const reportSourceTotals = useMemo(() => {
-    const grouped = sources
-      .map((source) => {
-        const sourceLeads = reportLeads.filter((lead) => lead.source === source);
-        return {
-          source,
-          count: sourceLeads.length,
-          value: sourceLeads.reduce((sum, lead) => sum + lead.proposalValue, 0),
-        };
-      })
-      .filter((item) => item.count > 0);
-    const missingSource = reportLeads.filter(
-      (lead) => !lead.source || !sources.includes(lead.source),
+    const grouped = new Map<
+      string,
+      { source: string; count: number; value: number }
+    >();
+
+    reportLeads.forEach((lead) => {
+      const sourceKey = sourceFilterValue(lead.source);
+      const source = sourceKey === emptySourceLabel ? sourceFormEmptyLabel : sourceKey;
+      const current = grouped.get(source) ?? { source, count: 0, value: 0 };
+      current.count += 1;
+      current.value += lead.proposalValue;
+      grouped.set(source, current);
+    });
+
+    return Array.from(grouped.values()).sort(
+      (first, second) => second.count - first.count,
     );
-
-    if (missingSource.length > 0) {
-      grouped.push({
-        source: "Sem origem",
-        count: missingSource.length,
-        value: missingSource.reduce((sum, lead) => sum + lead.proposalValue, 0),
-      });
-    }
-
-    return grouped.sort((first, second) => second.count - first.count);
   }, [reportLeads]);
 
   const reportLossTotals = useMemo(() => {
@@ -1853,7 +1870,7 @@ export default function Home() {
       lead.email,
       lead.city,
       lead.neighborhood,
-      lead.source,
+      sourceDisplayValue(lead.source),
       lead.campaign,
       lead.service,
       lead.customerType,
@@ -1950,30 +1967,34 @@ export default function Home() {
   }
 
   return (
-    <main className="crm-shell">
+    <main className={`crm-shell ${sidebarOpen ? "sidebar-open" : "sidebar-collapsed"}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark" role="img" aria-label="Grupo Baltt" />
-          <div>
-            <p>CRM Comercial</p>
-            <strong>Grupo Baltt</strong>
-          </div>
+          {sidebarOpen ? (
+            <div>
+              <p>CRM Comercial</p>
+              <strong>Grupo Baltt</strong>
+            </div>
+          ) : null}
         </div>
 
-        <div className={`sync-panel ${syncState}`}>
-          <span>
-            {syncState === "shared"
-              ? "Base Supabase"
-              : syncState === "saving"
-                ? "Salvando"
-                : syncState === "loading"
-                  ? "Conectando"
-                  : syncState === "error"
-                    ? "Atenção"
-                    : "Modo local"}
-          </span>
-          <small>{syncMessage}</small>
-        </div>
+        {sidebarOpen ? (
+          <div className={`sync-panel ${syncState}`}>
+            <span>
+              {syncState === "shared"
+                ? "Base Supabase"
+                : syncState === "saving"
+                  ? "Salvando"
+                  : syncState === "loading"
+                    ? "Conectando"
+                    : syncState === "error"
+                      ? "Atenção"
+                      : "Modo local"}
+            </span>
+            <small>{syncMessage}</small>
+          </div>
+        ) : null}
 
         <nav className="nav-list" aria-label="Areas do CRM">
           {navItems.map((item) => {
@@ -2000,8 +2021,8 @@ export default function Home() {
                 <span className="nav-icon">
                   <NavPictogram icon={item.icon} />
                 </span>
-                {item.label}
-                {lockedNavItem ? (
+                {sidebarOpen ? item.label : null}
+                {lockedNavItem && sidebarOpen ? (
                   <span className="lock-icon nav-lock" aria-hidden="true" />
                 ) : null}
               </button>
@@ -2009,36 +2030,48 @@ export default function Home() {
           })}
         </nav>
 
-        <div className="company-panel">
-          <div className="panel-heading">
-            <span>Empresas</span>
-            <small>{companies.length} funis</small>
-          </div>
-          <div className="company-list">
-            {companies.map((company) => {
-              const count = leads.filter((lead) => lead.company === company.key).length;
-              const allowed = companyIsAllowed(permission, company.key);
+        {sidebarOpen ? (
+          <div className="company-panel">
+            <div className="panel-heading">
+              <span>Empresas</span>
+              <small>{companies.length} funis</small>
+            </div>
+            <div className="company-list">
+              {companies.map((company) => {
+                const count = leads.filter((lead) => lead.company === company.key).length;
+                const allowed = companyIsAllowed(permission, company.key);
 
-              return (
-                <button
-                  className={`company-button ${
-                    activeCompany === company.key ? "selected" : ""
-                  } ${allowed ? "" : "locked"}`}
-                  disabled={!allowed}
-                  key={company.key}
-                  onClick={() => changeCompany(company.key)}
-                  style={{ "--company-accent": company.accent } as CSSProperties}
-                  type="button"
-                  title={allowed ? company.name : "Funil bloqueado para este usuario"}
-                >
-                  <span>{company.shortName}</span>
-                  {allowed ? <strong>{count}</strong> : <span className="lock-icon" aria-hidden="true" />}
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    className={`company-button ${
+                      activeCompany === company.key ? "selected" : ""
+                    } ${allowed ? "" : "locked"}`}
+                    disabled={!allowed}
+                    key={company.key}
+                    onClick={() => changeCompany(company.key)}
+                    style={{ "--company-accent": company.accent } as CSSProperties}
+                    type="button"
+                    title={allowed ? company.name : "Funil bloqueado para este usuario"}
+                  >
+                    <span>{company.shortName}</span>
+                    {allowed ? <strong>{count}</strong> : <span className="lock-icon" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
 
+        <button
+          className="sidebar-toggle"
+          type="button"
+          onClick={() => setSidebarOpen((open) => !open)}
+          aria-label={sidebarOpen ? "Recolher menu" : "Expandir menu"}
+          title={sidebarOpen ? "Recolher menu" : "Expandir menu"}
+        >
+          <span className="sidebar-toggle-icon" aria-hidden="true" />
+          {sidebarOpen ? <span>Recolher</span> : null}
+        </button>
       </aside>
 
       <section className="workspace">
@@ -2329,7 +2362,7 @@ export default function Home() {
                           <p>{lead.service}</p>
                           <div className="card-meta">
                             <span>{lead.city || "Cidade pendente"}</span>
-                            <span>{lead.source || "Sem origem"}</span>
+                            <span>{sourceDisplayValue(lead.source)}</span>
                           </div>
                           <div className="card-footer">
                             <strong>{currency.format(lead.proposalValue)}</strong>
@@ -2393,7 +2426,7 @@ export default function Home() {
                   </div>
                   <div>
                     <dt>Origem</dt>
-                    <dd>{selectedLead.source}</dd>
+                    <dd>{sourceDisplayValue(selectedLead.source)}</dd>
                   </div>
                   <div>
                     <dt>Campanha</dt>
@@ -2555,7 +2588,7 @@ export default function Home() {
                     <small>{lead.city || "Cidade pendente"}</small>
                   </div>
                   <span>{lead.phone || "Pendente"}</span>
-                  <span>{lead.source || "Sem origem"}</span>
+                  <span>{sourceDisplayValue(lead.source)}</span>
                   <span>{lead.service || "Sem produto"}</span>
                   <span className={`status-pill ${lead.stage}`}>
                     {statusFromStage(lead.stage)}
@@ -3122,7 +3155,7 @@ export default function Home() {
                   value={form.source}
                   onChange={(event) => setForm({ ...form, source: event.target.value })}
                 >
-                  {sources.map((source) => (
+                  {sourceFormOptions.map((source) => (
                     <option key={source}>{source}</option>
                   ))}
                 </select>
