@@ -9,6 +9,8 @@ O que muda:
 
 - CRM inteiro redesenhado para um visual dark premium inspirado no dashboard de referencia.
 - Sidebar, topo, cards de metricas, funis, lista de leads, investimentos, relatorios e modal de lead seguem o novo estilo.
+- Cards principais agora usam pictogramas especificos para leads no funil, propostas, vendas fechadas e custo por lead.
+- Grafico de evolucao de receita ganhou tooltip proprio animado, com mes e valor em destaque no mesmo visual do CRM.
 - Sidebar ganhou botao para recolher/expandir.
 - Mantidas as correcoes recentes de filtros, relatorios e origem `Nao informado`.
 - Nenhuma dependencia nova foi adicionada.

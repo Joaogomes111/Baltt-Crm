@@ -15,7 +15,18 @@ import type { CrmUserPermission } from "../src/supabaseClient";
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
 type NavIconKey = "pipeline" | "leads" | "investment" | "reports";
+type MetricIconKey = "leads" | "proposal" | "sale" | "cost";
 type DateFilterKey = "7" | "30" | "90" | "all" | "custom";
+type LeadStageFilterKey = StageKey | "all";
+type ReportScopeKey = CompanyKey | "all";
+type RevenueTooltip = {
+  key: string;
+  label: string;
+  value: number;
+  x: number;
+  y: number;
+  below: boolean;
+};
 type StageKey =
   | "novo"
   | "qualificado"
@@ -143,11 +154,25 @@ const services = [
 const sources = [
   "Meta Ads",
   "Google Ads",
+  "Site",
   "Organico",
   "Indicacao",
   "Orcamento direto",
   "Outro",
 ];
+const emptySourceLabel = "Sem origem";
+const sourceFilterOptions = [...sources, emptySourceLabel];
+const sourceFormEmptyLabel = "Nao informado";
+const sourceFormOptions = [...sources, sourceFormEmptyLabel];
+const sourceAliases = [...sourceFilterOptions, sourceFormEmptyLabel].reduce<
+  Record<string, string>
+>((aliases, source) => {
+  aliases[normalizeSourceKey(source)] =
+    source === sourceFormEmptyLabel ? emptySourceLabel : source;
+  return aliases;
+}, {});
+
+const chartColors = ["#2f8f6f", "#2d72b8", "#f6b21a", "#8b5cf6", "#ef6f4e", "#14b8a6"];
 
 const lossReasons = [
   "",
@@ -501,7 +526,7 @@ function leadToForm(lead: Lead): LeadForm {
     email: lead.email,
     city: lead.city,
     neighborhood: lead.neighborhood,
-    source: lead.source,
+    source: sourceDisplayValue(lead.source),
     campaign: lead.campaign,
     service: lead.service,
     customerType: lead.customerType,
@@ -624,6 +649,19 @@ function formatDate(date: string) {
   }).format(new Date(`${normalizedDate}T12:00:00`));
 }
 
+function formatMonthKey(key: string) {
+  if (key === "sem-data") return "Sem data";
+
+  const [year, month] = key.split("-").map(Number);
+  if (!year || !month) return key;
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    month: "short",
+  })
+    .format(new Date(year, month - 1, 1))
+    .replace(".", "");
+}
+
 function dateTimeValue(date: string) {
   const normalizedDate = normalizeDate(date);
   if (!normalizedDate) return null;
@@ -654,6 +692,36 @@ function dateMatchesFilter(
   }
 
   return daysSince(date) <= Number(filter);
+}
+
+function normalizeSourceKey(source: string) {
+  return source
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function sourceFilterValue(source: string) {
+  const sourceKey = normalizeSourceKey(source);
+  if (!sourceKey) return emptySourceLabel;
+
+  return sourceAliases[sourceKey] ?? source.trim();
+}
+
+function sourceDisplayValue(source: string) {
+  const sourceValue = sourceFilterValue(source);
+  return sourceValue === emptySourceLabel ? sourceFormEmptyLabel : sourceValue;
+}
+
+function sourceMatchesFilter(
+  lead: Pick<Lead, "source">,
+  selectedSources: string[],
+) {
+  return (
+    selectedSources.length === 0 ||
+    selectedSources.includes(sourceFilterValue(lead.source))
+  );
 }
 
 function normalizePhone(phone: string) {
@@ -857,6 +925,53 @@ function NavPictogram({ icon }: { icon: NavIconKey }) {
   );
 }
 
+function MetricPictogram({ icon }: { icon: MetricIconKey }) {
+  return (
+    <span className={`metric-pictogram metric-pictogram-${icon}`} aria-hidden="true">
+      <svg fill="none" viewBox="0 0 24 24">
+        {icon === "leads" ? (
+          <>
+            <path d="M4 5h16l-6.2 7.2v5.2l-3.6 1.8v-7L4 5Z" />
+            <circle cx="17" cy="17" r="2.5" />
+            <path d="M13.7 21c.5-1.8 1.6-2.8 3.3-2.8s2.8 1 3.3 2.8" />
+          </>
+        ) : null}
+        {icon === "proposal" ? (
+          <>
+            <path d="M6 3.5h8l4 4v13H6z" />
+            <path d="M14 3.5v4h4" />
+            <path d="M9 11.5h5.5" />
+            <path d="M9 14.8h4" />
+            <path d="m14.6 18.2 2.8-2.8 1.5 1.5-2.8 2.8-2 .5.5-2Z" />
+          </>
+        ) : null}
+        {icon === "sale" ? (
+          <>
+            <circle cx="12" cy="12" r="8" />
+            <path d="m8.2 12.2 2.4 2.4 5.2-5.4" />
+            <path d="M7.5 20h9" />
+            <path d="M12 20v-2.2" />
+          </>
+        ) : null}
+        {icon === "cost" ? (
+          <>
+            <rect x="5" y="3.5" width="14" height="17" rx="2" />
+            <path d="M8 7.5h8" />
+            <path d="M8 11h2" />
+            <path d="M12 11h2" />
+            <path d="M16 11h.1" />
+            <path d="M8 14.3h2" />
+            <path d="M12 14.3h2" />
+            <path d="M16 14.3h.1" />
+            <path d="M8 17.6h2" />
+            <path d="M12 17.6h4" />
+          </>
+        ) : null}
+      </svg>
+    </span>
+  );
+}
+
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>(() => {
     if (supabaseEnabled) return "checking";
@@ -898,12 +1013,18 @@ export default function Home() {
   const [activeCompany, setActiveCompany] = useState<CompanyKey>("baltt");
   const [activeView, setActiveView] = useState<ViewKey>("funis");
   const [query, setQuery] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("Todas");
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  const [revenueTooltip, setRevenueTooltip] = useState<RevenueTooltip | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilterKey>("90");
   const [customDateStart, setCustomDateStart] = useState("");
   const [customDateEnd, setCustomDateEnd] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [leadStageFilter, setLeadStageFilter] =
+    useState<LeadStageFilterKey>("all");
+  const [reportScope, setReportScope] = useState<ReportScopeKey>("all");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
     initialLeads[0]?.id ?? null,
   );
@@ -1077,9 +1198,11 @@ export default function Home() {
   }, [activeView, selectedLeadId]);
 
   const activeCompanyData = getCompany(activeCompany);
-  const activeViewData =
-    navItems.find((item) => item.key === activeView) ?? navItems[0];
   const hasAdminAccess = permission.role === "admin";
+  const activeViewKey: ViewKey =
+    activeView === "investimento" && !hasAdminAccess ? "funis" : activeView;
+  const activeViewData =
+    navItems.find((item) => item.key === activeViewKey) ?? navItems[0];
   const activeCompanyAllowed = companyIsAllowed(permission, activeCompany);
 
   const companyLeads = useMemo(
@@ -1109,7 +1232,7 @@ export default function Home() {
           .toLowerCase();
         return searchable.includes(normalizedQuery);
       })
-      .filter((lead) => sourceFilter === "Todas" || lead.source === sourceFilter)
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
       .filter((lead) => {
         return dateMatchesFilter(
           lead.arrivalDate,
@@ -1126,12 +1249,28 @@ export default function Home() {
   }, [
     companyLeads,
     query,
-    sourceFilter,
+    sourceFilters,
     dateFilter,
     customDateStart,
     customDateEnd,
     sortOrder,
   ]);
+
+  const tableLeads = useMemo(() => {
+    return filteredLeads.filter(
+      (lead) => leadStageFilter === "all" || lead.stage === leadStageFilter,
+    );
+  }, [filteredLeads, leadStageFilter]);
+  const validSelectedLeadIds = selectedLeadIds.filter((leadId) => {
+    const lead = leads.find((item) => item.id === leadId);
+    return lead ? companyIsAllowed(permission, lead.company) : false;
+  });
+  const visibleLeadIds = tableLeads.map((lead) => lead.id);
+  const selectedVisibleCount = validSelectedLeadIds.filter((leadId) =>
+    visibleLeadIds.includes(leadId),
+  ).length;
+  const allVisibleSelected =
+    tableLeads.length > 0 && selectedVisibleCount === tableLeads.length;
 
   const selectedLead = useMemo(
     () => {
@@ -1199,48 +1338,39 @@ export default function Home() {
     investments.length > 0 ? investmentTotal / investments.length : 0;
   const leadCost =
     metrics.total > 0 ? investmentTotal / Math.max(metrics.total, 1) : 0;
-  const stageMaxCount = Math.max(...stageTotals.map((stage) => stage.count), 1);
 
-  const sourceTotals = useMemo(() => {
-    const grouped = sources
-      .map((source) => {
-        const sourceLeads = companyLeads.filter((lead) => lead.source === source);
-        return {
-          source,
-          count: sourceLeads.length,
-          value: sourceLeads.reduce((sum, lead) => sum + lead.proposalValue, 0),
-        };
-      })
-      .filter((item) => item.count > 0);
-    const missingSource = companyLeads.filter(
-      (lead) => !lead.source || !sources.includes(lead.source),
-    );
-
-    if (missingSource.length > 0) {
-      grouped.push({
-        source: "Sem origem",
-        count: missingSource.length,
-        value: missingSource.reduce((sum, lead) => sum + lead.proposalValue, 0),
+  const reportFilteredAllowedLeads = useMemo(() => {
+    return leads
+      .filter((lead) => companyIsAllowed(permission, lead.company))
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
+      .filter((lead) =>
+        dateMatchesFilter(
+          lead.arrivalDate,
+          dateFilter,
+          customDateStart,
+          customDateEnd,
+        ),
+      )
+      .sort((a, b) => {
+        const first = new Date(a.arrivalDate).getTime();
+        const second = new Date(b.arrivalDate).getTime();
+        return sortOrder === "desc" ? second - first : first - second;
       });
-    }
-
-    return grouped.sort((first, second) => second.count - first.count);
-  }, [companyLeads]);
-
-  const lossTotals = useMemo(() => {
-    return lossReasons
-      .filter(Boolean)
-      .map((reason) => ({
-        reason,
-        count: companyLeads.filter((lead) => lead.lossReason === reason).length,
-      }))
-      .filter((item) => item.count > 0)
-      .sort((first, second) => second.count - first.count);
-  }, [companyLeads]);
+  }, [
+    leads,
+    permission,
+    sourceFilters,
+    dateFilter,
+    customDateStart,
+    customDateEnd,
+    sortOrder,
+  ]);
 
   const companyTotals = useMemo(() => {
     return companies.map((company) => {
-      const items = leads.filter((lead) => lead.company === company.key);
+      const items = reportFilteredAllowedLeads.filter(
+        (lead) => lead.company === company.key,
+      );
       return {
         ...company,
         count: items.length,
@@ -1251,20 +1381,255 @@ export default function Home() {
         value: items.reduce((sum, lead) => sum + lead.proposalValue, 0),
       };
     });
-  }, [leads]);
+  }, [reportFilteredAllowedLeads]);
+
+  const reportScopeIsAll = reportScope === "all" && hasAdminAccess;
+  const reportCompanyKey = reportScope === "all" ? activeCompany : reportScope;
+  const reportCompanyData = getCompany(reportCompanyKey);
+  const reportScopeLabel = reportScopeIsAll
+    ? "Todas as empresas"
+    : reportCompanyData.shortName;
+  const reportScopeFocus = reportScopeIsAll
+    ? "Consolidado Baltt, Vale e Baltec"
+    : reportCompanyData.focus;
+
+  const reportLeads = useMemo(() => {
+    if (reportScope === "all" && hasAdminAccess) {
+      return reportFilteredAllowedLeads;
+    }
+
+    const targetCompany = reportScope === "all" ? activeCompany : reportScope;
+    if (!companyIsAllowed(permission, targetCompany)) return [];
+
+    return reportFilteredAllowedLeads.filter(
+      (lead) => lead.company === targetCompany,
+    );
+  }, [
+    activeCompany,
+    hasAdminAccess,
+    permission,
+    reportFilteredAllowedLeads,
+    reportScope,
+  ]);
+
+  const reportStageTotals = useMemo(() => {
+    return stages.map((stage) => ({
+      ...stage,
+      count: reportLeads.filter((lead) => lead.stage === stage.key).length,
+      value: reportLeads
+        .filter((lead) => lead.stage === stage.key)
+        .reduce((sum, lead) => sum + lead.proposalValue, 0),
+    }));
+  }, [reportLeads]);
+
+  const reportMetrics = useMemo(() => {
+    const won = reportLeads.filter((lead) => lead.stage === "ganho");
+    const lost = reportLeads.filter((lead) => lead.stage === "perdido");
+    const pipeline = reportLeads.filter(
+      (lead) => lead.stage !== "ganho" && lead.stage !== "perdido",
+    );
+    const proposalValue = pipeline.reduce(
+      (sum, lead) => sum + lead.proposalValue,
+      0,
+    );
+    const wonValue = won.reduce((sum, lead) => sum + lead.proposalValue, 0);
+    const qualified = reportLeads.filter((lead) =>
+      ["Sim", "Parcial"].includes(lead.qualified),
+    );
+
+    return {
+      total: reportLeads.length,
+      pipeline: pipeline.length,
+      proposalValue,
+      wonValue,
+      conversion:
+        reportLeads.length > 0
+          ? Math.round((won.length / reportLeads.length) * 100)
+          : 0,
+      lost: lost.length,
+      qualified:
+        reportLeads.length > 0
+          ? Math.round((qualified.length / reportLeads.length) * 100)
+          : 0,
+    };
+  }, [reportLeads]);
+
+  const reportSourceTotals = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { source: string; count: number; value: number }
+    >();
+
+    reportLeads.forEach((lead) => {
+      const sourceKey = sourceFilterValue(lead.source);
+      const source = sourceKey === emptySourceLabel ? sourceFormEmptyLabel : sourceKey;
+      const current = grouped.get(source) ?? { source, count: 0, value: 0 };
+      current.count += 1;
+      current.value += lead.proposalValue;
+      grouped.set(source, current);
+    });
+
+    return Array.from(grouped.values()).sort(
+      (first, second) => second.count - first.count,
+    );
+  }, [reportLeads]);
+
+  const reportLossTotals = useMemo(() => {
+    return lossReasons
+      .filter(Boolean)
+      .map((reason) => ({
+        reason,
+        count: reportLeads.filter((lead) => lead.lossReason === reason).length,
+      }))
+      .filter((item) => item.count > 0)
+      .sort((first, second) => second.count - first.count);
+  }, [reportLeads]);
+
+  const reportMonthlyReport = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        leads: number;
+        proposals: number;
+        won: number;
+        value: number;
+      }
+    >();
+
+    reportLeads.forEach((lead) => {
+      const normalizedDate = normalizeDate(lead.arrivalDate);
+      const key = normalizedDate ? normalizedDate.slice(0, 7) : "sem-data";
+      const current =
+        grouped.get(key) ??
+        {
+          key,
+          label: formatMonthKey(key),
+          leads: 0,
+          proposals: 0,
+          won: 0,
+          value: 0,
+        };
+
+      current.leads += 1;
+      current.proposals += lead.stage === "proposta" ? 1 : 0;
+      current.won += lead.stage === "ganho" ? 1 : 0;
+      current.value += lead.proposalValue;
+      grouped.set(key, current);
+    });
+
+    return Array.from(grouped.values())
+      .sort((first, second) => first.key.localeCompare(second.key))
+      .slice(-7);
+  }, [reportLeads]);
+
+  const reportWonCount =
+    reportStageTotals.find((stage) => stage.key === "ganho")?.count ?? 0;
+  const reportAverageTicket =
+    reportWonCount > 0 ? reportMetrics.wonValue / reportWonCount : 0;
+  const reportLeadCost =
+    reportMetrics.total > 0
+      ? investmentTotal / Math.max(reportMetrics.total, 1)
+      : 0;
+  const reportStageMaxCount = Math.max(
+    ...reportStageTotals.map((stage) => stage.count),
+    1,
+  );
+  const reportMonthlyMaxLeads = Math.max(
+    ...reportMonthlyReport.map((item) => item.leads),
+    1,
+  );
+  const reportSourceTotalCount = Math.max(
+    reportSourceTotals.reduce((sum, item) => sum + item.count, 0),
+    1,
+  );
+  const reportSourceSlices = reportSourceTotals.slice(0, 6).map((item, index) => ({
+    ...item,
+    color: chartColors[index % chartColors.length],
+    percent: Math.round((item.count / reportSourceTotalCount) * 100),
+  }));
+  const reportSourceGradient =
+    reportSourceSlices.length > 0
+      ? `conic-gradient(${reportSourceSlices
+          .reduce<Array<{ color: string; start: number; end: number }>>(
+            (segments, item) => {
+              const start = segments.at(-1)?.end ?? 0;
+              const end = start + (item.count / reportSourceTotalCount) * 100;
+              return [...segments, { color: item.color, start, end }];
+            },
+            [],
+          )
+          .map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`)
+          .join(", ")})`
+      : "conic-gradient(#26384f 0% 100%)";
+  const reportRevenueChart = useMemo(() => {
+    const chartWidth = 640;
+    const chartHeight = 250;
+    const paddingX = 34;
+    const paddingY = 30;
+    const rows =
+      reportMonthlyReport.length > 0
+        ? reportMonthlyReport
+        : [
+            {
+              key: "sem-data",
+              label: "Sem dados",
+              leads: 0,
+              proposals: 0,
+              won: 0,
+              value: 0,
+            },
+          ];
+    const maxValue = Math.max(...rows.map((item) => item.value), 1);
+    const step =
+      rows.length > 1
+        ? (chartWidth - paddingX * 2) / (rows.length - 1)
+        : 0;
+    const points = rows.map((item, index) => {
+      const x = rows.length > 1 ? paddingX + index * step : chartWidth / 2;
+      const y =
+        chartHeight -
+        paddingY -
+        (item.value / maxValue) * (chartHeight - paddingY * 2);
+
+      return { ...item, x, y };
+    });
+    const line = points.map((point) => `${point.x},${point.y}`).join(" ");
+    const area =
+      points.length > 0
+        ? `M ${points[0].x} ${chartHeight - paddingY} L ${line.replaceAll(
+            " ",
+            " L ",
+          )} L ${points[points.length - 1].x} ${chartHeight - paddingY} Z`
+        : "";
+
+    return { width: chartWidth, height: chartHeight, points, line, area };
+  }, [reportMonthlyReport]);
+
+  const headerMetrics = activeViewKey === "relatorios" ? reportMetrics : metrics;
+  const headerLeadCost =
+    activeViewKey === "relatorios" ? reportLeadCost : leadCost;
 
   const activeViewTitle =
-    activeView === "funis"
+    activeViewKey === "funis"
       ? activeCompanyData.name
-      : `${activeViewData.label} - ${activeCompanyData.shortName}`;
+      : activeViewKey === "relatorios"
+        ? `${activeViewData.label} - ${reportScopeLabel}`
+        : `${activeViewData.label} - ${activeCompanyData.shortName}`;
   const activeViewSubtitle =
-    activeView === "funis"
+    activeViewKey === "funis"
       ? activeCompanyData.focus
-      : activeView === "leads"
-        ? `${filteredLeads.length} leads filtrados de ${companyLeads.length} no total`
-        : activeView === "investimento"
+      : activeViewKey === "leads"
+        ? `${tableLeads.length} leads filtrados de ${companyLeads.length} no total`
+        : activeViewKey === "investimento"
           ? `${currency.format(investmentTotal)} em Meta Ads e Google Ads`
-          : `${metrics.conversion}% conversao e ${metrics.qualified}% qualificados`;
+          : `${reportMetrics.conversion}% conversao e ${reportMetrics.qualified}% qualificados`;
+  const sourceFilterSummary = useMemo(() => {
+    if (sourceFilters.length === 0) return "Todas";
+    if (sourceFilters.length === 1) return sourceFilters[0];
+    return `${sourceFilters.length} origens`;
+  }, [sourceFilters]);
 
   function changeCompany(companyKey: CompanyKey) {
     if (!companyIsAllowed(permission, companyKey)) return;
@@ -1272,6 +1637,14 @@ export default function Home() {
     setActiveCompany(companyKey);
     setSelectedLeadId(
       leads.find((lead) => lead.company === companyKey)?.id ?? null,
+    );
+  }
+
+  function toggleSourceFilter(source: string) {
+    setSourceFilters((current) =>
+      current.includes(source)
+        ? current.filter((item) => item !== source)
+        : [...current, source],
     );
   }
 
@@ -1417,8 +1790,48 @@ export default function Home() {
   }
 
   function removeLead(leadId: string) {
-    setLeads((current) => current.filter((lead) => lead.id !== leadId));
+    setLeads((current) =>
+      current.filter(
+        (lead) => lead.id !== leadId || !companyIsAllowed(permission, lead.company),
+      ),
+    );
+    setSelectedLeadIds((current) => current.filter((id) => id !== leadId));
     if (selectedLeadId === leadId) setSelectedLeadId(null);
+  }
+
+  function toggleLeadSelection(leadId: string) {
+    setSelectedLeadIds((current) =>
+      current.includes(leadId)
+        ? current.filter((id) => id !== leadId)
+        : [...current, leadId],
+    );
+  }
+
+  function toggleVisibleLeadSelection(checked: boolean) {
+    const visibleIds = tableLeads.map((lead) => lead.id);
+
+    setSelectedLeadIds((current) => {
+      if (!checked) return current.filter((id) => !visibleIds.includes(id));
+
+      const next = new Set([...current, ...visibleIds]);
+      return Array.from(next);
+    });
+  }
+
+  function removeSelectedLeads() {
+    const removableIds = validSelectedLeadIds;
+
+    if (removableIds.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Excluir ${removableIds.length} lead(s) selecionado(s)?`,
+    );
+    if (!confirmed) return;
+
+    const idsToRemove = new Set(removableIds);
+    setLeads((current) => current.filter((lead) => !idsToRemove.has(lead.id)));
+    setSelectedLeadIds([]);
+    if (selectedLeadId && idsToRemove.has(selectedLeadId)) setSelectedLeadId(null);
   }
 
   function handleCsvUpload(file: File) {
@@ -1514,7 +1927,7 @@ export default function Home() {
       lead.email,
       lead.city,
       lead.neighborhood,
-      lead.source,
+      sourceDisplayValue(lead.source),
       lead.campaign,
       lead.service,
       lead.customerType,
@@ -1611,85 +2024,118 @@ export default function Home() {
   }
 
   return (
-    <main className="crm-shell">
+    <main className={`crm-shell ${sidebarOpen ? "sidebar-open" : "sidebar-collapsed"}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark" role="img" aria-label="Grupo Baltt" />
-          <div>
-            <p>CRM Comercial</p>
-            <strong>Grupo Baltt</strong>
-          </div>
+          {sidebarOpen ? (
+            <div>
+              <p>CRM Comercial</p>
+              <strong>Grupo Baltt</strong>
+            </div>
+          ) : null}
         </div>
 
-        <div className={`sync-panel ${syncState}`}>
-          <span>
-            {syncState === "shared"
-              ? "Base Supabase"
-              : syncState === "saving"
-                ? "Salvando"
-                : syncState === "loading"
-                  ? "Conectando"
-                  : syncState === "error"
-                    ? "Atenção"
-                    : "Modo local"}
-          </span>
-          <small>{syncMessage}</small>
-        </div>
+        {sidebarOpen ? (
+          <div className={`sync-panel ${syncState}`}>
+            <span>
+              {syncState === "shared"
+                ? "Base Supabase"
+                : syncState === "saving"
+                  ? "Salvando"
+                  : syncState === "loading"
+                    ? "Conectando"
+                    : syncState === "error"
+                      ? "Atenção"
+                      : "Modo local"}
+            </span>
+            <small>{syncMessage}</small>
+          </div>
+        ) : null}
 
         <nav className="nav-list" aria-label="Areas do CRM">
-          {navItems.map((item) => (
-            <button
-              className={`nav-item ${activeView === item.key ? "active" : ""}`}
-              key={item.key}
-              onClick={() => setActiveView(item.key)}
-              type="button"
-              title={item.label}
-            >
-              <span className="nav-icon">
-                <NavPictogram icon={item.icon} />
-              </span>
-              {item.label}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const lockedNavItem = item.key === "investimento" && !hasAdminAccess;
+
+            return (
+              <button
+                className={`nav-item ${activeViewKey === item.key ? "active" : ""} ${
+                  lockedNavItem ? "locked" : ""
+                }`}
+                disabled={lockedNavItem}
+                key={item.key}
+                onClick={() => {
+                  if (lockedNavItem) return;
+                  setActiveView(item.key);
+                }}
+                type="button"
+                title={
+                  lockedNavItem
+                    ? "Investimento liberado apenas para admin"
+                    : item.label
+                }
+              >
+                <span className="nav-icon">
+                  <NavPictogram icon={item.icon} />
+                </span>
+                {sidebarOpen ? item.label : null}
+                {lockedNavItem && sidebarOpen ? (
+                  <span className="lock-icon nav-lock" aria-hidden="true" />
+                ) : null}
+              </button>
+            );
+          })}
         </nav>
 
-        <div className="company-panel">
-          <div className="panel-heading">
-            <span>Empresas</span>
-            <small>{companies.length} funis</small>
-          </div>
-          <div className="company-list">
-            {companies.map((company) => {
-              const count = leads.filter((lead) => lead.company === company.key).length;
-              const allowed = companyIsAllowed(permission, company.key);
+        {sidebarOpen ? (
+          <div className="company-panel">
+            <div className="panel-heading">
+              <span>Empresas</span>
+              <small>{companies.length} funis</small>
+            </div>
+            <div className="company-list">
+              {companies.map((company) => {
+                const count = leads.filter((lead) => lead.company === company.key).length;
+                const allowed = companyIsAllowed(permission, company.key);
 
-              return (
-                <button
-                  className={`company-button ${
-                    activeCompany === company.key ? "selected" : ""
-                  } ${allowed ? "" : "locked"}`}
-                  disabled={!allowed}
-                  key={company.key}
-                  onClick={() => changeCompany(company.key)}
-                  style={{ "--company-accent": company.accent } as CSSProperties}
-                  type="button"
-                  title={allowed ? company.name : "Funil bloqueado para este usuario"}
-                >
-                  <span>{company.shortName}</span>
-                  {allowed ? <strong>{count}</strong> : <span className="lock-icon" aria-hidden="true" />}
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    className={`company-button ${
+                      activeCompany === company.key ? "selected" : ""
+                    } ${allowed ? "" : "locked"}`}
+                    disabled={!allowed}
+                    key={company.key}
+                    onClick={() => changeCompany(company.key)}
+                    style={{ "--company-accent": company.accent } as CSSProperties}
+                    type="button"
+                    title={allowed ? company.name : "Funil bloqueado para este usuario"}
+                  >
+                    <span>{company.shortName}</span>
+                    {allowed ? <strong>{count}</strong> : <span className="lock-icon" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
 
+        <button
+          className="sidebar-toggle"
+          type="button"
+          onClick={() => setSidebarOpen((open) => !open)}
+          aria-label={sidebarOpen ? "Recolher menu" : "Expandir menu"}
+          title={sidebarOpen ? "Recolher menu" : "Expandir menu"}
+        >
+          <span className="sidebar-toggle-icon" aria-hidden="true" />
+          {sidebarOpen ? <span>Recolher</span> : null}
+        </button>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
             <p className="eyebrow">
-              {activeView === "funis" ? "Funil por empresa" : activeViewData.label}
+              {activeViewKey === "funis" ? "Funil por empresa" : activeViewData.label}
             </p>
             <h1>{activeViewTitle}</h1>
             <span>{activeViewSubtitle}</span>
@@ -1740,40 +2186,79 @@ export default function Home() {
 
         <section className="metrics-grid" aria-label="Indicadores">
           <article className="metric">
+            <MetricPictogram icon="leads" />
             <span>Leads no funil</span>
-            <strong>{metrics.total}</strong>
-            <small>{metrics.pipeline} em andamento</small>
+            <strong>{headerMetrics.total}</strong>
+            <small>{headerMetrics.pipeline} em andamento</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="proposal" />
             <span>Propostas abertas</span>
-            <strong>{currency.format(metrics.proposalValue)}</strong>
-            <small>{metrics.qualified}% qualificados</small>
+            <strong>{currency.format(headerMetrics.proposalValue)}</strong>
+            <small>{headerMetrics.qualified}% qualificados</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="sale" />
             <span>Vendas fechadas</span>
-            <strong>{currency.format(metrics.wonValue)}</strong>
-            <small>{metrics.conversion}% conversao</small>
+            <strong>{currency.format(headerMetrics.wonValue)}</strong>
+            <small>{headerMetrics.conversion}% conversao</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="cost" />
             <span>Custo base por lead</span>
-            <strong>{currency.format(leadCost)}</strong>
+            <strong>{currency.format(headerLeadCost)}</strong>
             <small>Meta + Google no periodo</small>
           </article>
         </section>
 
         <section className="control-strip">
           <div className="segmented" aria-label="Empresas">
+            {activeViewKey === "relatorios" ? (
+              <button
+                type="button"
+                className={reportScope === "all" ? "active" : ""}
+                disabled={!hasAdminAccess}
+                onClick={() => setReportScope("all")}
+                title={
+                  hasAdminAccess
+                    ? "Relatorio completo"
+                    : "Relatorio completo bloqueado para este usuario"
+                }
+              >
+                {!hasAdminAccess ? (
+                  <span className="lock-icon" aria-hidden="true" />
+                ) : null}
+                <span>Todas</span>
+              </button>
+            ) : null}
             {companies.map((company) => {
               const allowed = companyIsAllowed(permission, company.key);
+              const selected =
+                activeViewKey === "relatorios"
+                  ? reportScope !== "all" && reportScope === company.key
+                  : activeCompany === company.key;
 
               return (
                 <button
                   type="button"
                   key={company.key}
-                  className={`${activeCompany === company.key ? "active" : ""} ${allowed ? "" : "locked"}`}
+                  className={`${selected ? "active" : ""} ${allowed ? "" : "locked"}`}
                   disabled={!allowed}
-                  onClick={() => changeCompany(company.key)}
-                  title={allowed ? company.name : "Funil bloqueado para este usuario"}
+                  onClick={() => {
+                    if (activeViewKey === "relatorios") {
+                      setReportScope(company.key);
+                      return;
+                    }
+
+                    changeCompany(company.key);
+                  }}
+                  title={
+                    allowed
+                      ? company.name
+                      : activeViewKey === "relatorios"
+                        ? "Relatorio bloqueado para este usuario"
+                        : "Funil bloqueado para este usuario"
+                  }
                 >
                   {!allowed ? <span className="lock-icon" aria-hidden="true" /> : null}
                   <span>{company.shortName}</span>
@@ -1782,18 +2267,49 @@ export default function Home() {
             })}
           </div>
           <div className="filters">
-            <label>
-              Origem
-              <select
-                value={sourceFilter}
-                onChange={(event) => setSourceFilter(event.target.value)}
-              >
-                <option>Todas</option>
-                {sources.map((source) => (
-                  <option key={source}>{source}</option>
-                ))}
-              </select>
-            </label>
+            <div className="filter-group">
+              <span>Origem</span>
+              <details className="multi-select">
+                <summary>{sourceFilterSummary}</summary>
+                <div className="multi-select-menu">
+                  <button
+                    className={sourceFilters.length === 0 ? "active" : ""}
+                    type="button"
+                    onClick={() => setSourceFilters([])}
+                  >
+                    Todas
+                  </button>
+                  {sourceFilterOptions.map((source) => (
+                    <label className="multi-select-option" key={source}>
+                      <input
+                        type="checkbox"
+                        checked={sourceFilters.includes(source)}
+                        onChange={() => toggleSourceFilter(source)}
+                      />
+                      <span>{source}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            </div>
+            {activeViewKey === "leads" ? (
+              <label>
+                Etapa
+                <select
+                  value={leadStageFilter}
+                  onChange={(event) =>
+                    setLeadStageFilter(event.target.value as LeadStageFilterKey)
+                  }
+                >
+                  <option value="all">Todas</option>
+                  {stages.map((stage) => (
+                    <option key={stage.key} value={stage.key}>
+                      {stage.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label>
               Entrada
               <select
@@ -1844,7 +2360,7 @@ export default function Home() {
           </div>
         </section>
 
-        {activeView === "funis" ? (
+        {activeViewKey === "funis" ? (
           <>
             <section className={`main-grid ${selectedLead ? "details-open" : "details-closed"}`}>
           <div className="board" aria-label={`Funil ${activeCompanyData.name}`}>
@@ -1907,7 +2423,7 @@ export default function Home() {
                           <p>{lead.service}</p>
                           <div className="card-meta">
                             <span>{lead.city || "Cidade pendente"}</span>
-                            <span>{lead.source || "Sem origem"}</span>
+                            <span>{sourceDisplayValue(lead.source)}</span>
                           </div>
                           <div className="card-footer">
                             <strong>{currency.format(lead.proposalValue)}</strong>
@@ -1971,7 +2487,7 @@ export default function Home() {
                   </div>
                   <div>
                     <dt>Origem</dt>
-                    <dd>{selectedLead.source}</dd>
+                    <dd>{sourceDisplayValue(selectedLead.source)}</dd>
                   </div>
                   <div>
                     <dt>Campanha</dt>
@@ -2071,15 +2587,43 @@ export default function Home() {
           </>
         ) : null}
 
-        {activeView === "leads" ? (
+        {activeViewKey === "leads" ? (
           <section className="content-card leads-view" aria-label="Lista de leads">
             <div className="panel-heading">
               <span>Leads cadastrados</span>
-              <small>{filteredLeads.length} visiveis</small>
+              <small>{tableLeads.length} visiveis</small>
+            </div>
+
+            <div className="bulk-toolbar">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  disabled={tableLeads.length === 0}
+                  onChange={(event) =>
+                    toggleVisibleLeadSelection(event.target.checked)
+                  }
+                />
+                Selecionar visiveis
+              </label>
+              <span>
+                {validSelectedLeadIds.length > 0
+                  ? `${validSelectedLeadIds.length} selecionado(s)`
+                  : "Nenhum selecionado"}
+              </span>
+              <button
+                className="danger-button"
+                disabled={validSelectedLeadIds.length === 0}
+                type="button"
+                onClick={removeSelectedLeads}
+              >
+                Excluir selecionados
+              </button>
             </div>
 
             <div className="lead-table">
               <div className="lead-table-row lead-table-head">
+                <span>Sel.</span>
                 <span>Entrada</span>
                 <span>Lead</span>
                 <span>WhatsApp</span>
@@ -2089,15 +2633,23 @@ export default function Home() {
                 <span>Proposta</span>
                 <span>Acoes</span>
               </div>
-              {filteredLeads.map((lead) => (
+              {tableLeads.map((lead) => (
                 <div className="lead-table-row" key={lead.id}>
+                  <label className="row-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedLeadIds.includes(lead.id)}
+                      onChange={() => toggleLeadSelection(lead.id)}
+                      aria-label={`Selecionar ${lead.name}`}
+                    />
+                  </label>
                   <time>{formatDate(lead.arrivalDate)}</time>
                   <div className="lead-name-cell">
                     <strong>{lead.name}</strong>
                     <small>{lead.city || "Cidade pendente"}</small>
                   </div>
                   <span>{lead.phone || "Pendente"}</span>
-                  <span>{lead.source || "Sem origem"}</span>
+                  <span>{sourceDisplayValue(lead.source)}</span>
                   <span>{lead.service || "Sem produto"}</span>
                   <span className={`status-pill ${lead.stage}`}>
                     {statusFromStage(lead.stage)}
@@ -2123,14 +2675,14 @@ export default function Home() {
                   </div>
                 </div>
               ))}
-              {filteredLeads.length === 0 ? (
+              {tableLeads.length === 0 ? (
                 <div className="empty-table">Nenhum lead encontrado</div>
               ) : null}
             </div>
           </section>
         ) : null}
 
-        {activeView === "investimento" ? (
+        {activeViewKey === "investimento" ? (
           <section className="investment-view" aria-label="Investimento">
             <div className="investment-kpis">
               <article className="content-card compact-metric">
@@ -2303,112 +2855,310 @@ export default function Home() {
           </section>
         ) : null}
 
-        {activeView === "relatorios" ? (
-          <section className="report-grid" aria-label="Relatorios">
-            <article className="summary-panel">
-              <div className="panel-heading">
-                <span>Etapas do funil</span>
-                <small>{activeCompanyData.shortName}</small>
+        {activeViewKey === "relatorios" ? (
+          <section className="analytics-dashboard" aria-label="Relatorios">
+            <header className="analytics-hero">
+              <div>
+                <p className="eyebrow">Dashboard comercial</p>
+                <h2>{reportScopeLabel} Performance</h2>
+                <span>{reportScopeFocus}</span>
               </div>
-              <div className="stage-bars">
-                {stageTotals.map((stage) => (
-                  <div className="stage-bar" key={stage.key}>
-                    <span>{stage.label}</span>
-                    <div>
-                      <i
-                        style={{
-                          width: `${Math.max(8, (stage.count / stageMaxCount) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <strong>{stage.count}</strong>
+              <div className="analytics-hero-stats">
+                <strong>{currency.format(investmentTotal)}</strong>
+                <span>Investimento total</span>
+                <small>{currency.format(reportLeadCost)} por lead</small>
+              </div>
+            </header>
+
+            <div className="analytics-kpi-grid">
+              <article className="analytics-kpi">
+                <span>Leads no funil</span>
+                <strong>{reportMetrics.total}</strong>
+                <small>{reportMetrics.pipeline} em andamento</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Propostas abertas</span>
+                <strong>{currency.format(reportMetrics.proposalValue)}</strong>
+                <small>{reportMetrics.qualified}% qualificados</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Vendas fechadas</span>
+                <strong>{currency.format(reportMetrics.wonValue)}</strong>
+                <small>{reportWonCount} negocios ganhos</small>
+              </article>
+              <article className="analytics-kpi">
+                <span>Conversao</span>
+                <strong>{reportMetrics.conversion}%</strong>
+                <small>{currency.format(reportAverageTicket)} ticket medio</small>
+              </article>
+            </div>
+
+            <div className="analytics-main-grid">
+              <article className="analytics-card analytics-card-wide">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Evolucao de receita</span>
+                    <small>Valor em proposta e vendas por mes</small>
                   </div>
-                ))}
-              </div>
-            </article>
+                  <strong>{currency.format(reportMetrics.proposalValue + reportMetrics.wonValue)}</strong>
+                </div>
 
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Origem dos leads</span>
-                <small>{companyLeads.length} leads</small>
-              </div>
-              <div className="report-list">
-                {sourceTotals.map((item) => (
-                  <div className="report-row" key={item.source}>
-                    <div>
-                      <strong>{item.source}</strong>
-                      <small>{currency.format(item.value)}</small>
-                    </div>
-                    <span>{item.count}</span>
-                  </div>
-                ))}
-                {sourceTotals.length === 0 ? (
-                  <div className="empty-table">Sem origem registrada</div>
-                ) : null}
-              </div>
-            </article>
-
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Motivos de perda</span>
-                <small>{metrics.lost} perdidos</small>
-              </div>
-              <div className="report-list">
-                {lossTotals.map((item) => (
-                  <div className="report-row" key={item.reason}>
-                    <div>
-                      <strong>{item.reason}</strong>
-                      <small>Leads perdidos</small>
-                    </div>
-                    <span>{item.count}</span>
-                  </div>
-                ))}
-                {lossTotals.length === 0 ? (
-                  <div className="empty-table">Sem perdas registradas</div>
-                ) : null}
-              </div>
-            </article>
-
-            <article className="content-card report-card">
-              <div className="panel-heading">
-                <span>Visao por empresa</span>
-                <small>{leads.length} leads totais</small>
-              </div>
-              <div className="company-report-list">
-                {companyTotals.map((company) => {
-                  const allowed = companyIsAllowed(permission, company.key);
-
-                  return (
-                    <button
-                      className={`company-report ${
-                        activeCompany === company.key ? "selected" : ""
-                      } ${allowed ? "" : "locked"}`}
-                      disabled={!allowed}
-                      key={company.key}
-                      onClick={() => changeCompany(company.key)}
-                      style={{ "--company-accent": company.accent } as CSSProperties}
-                      type="button"
-                      title={allowed ? company.name : "Relatorio bloqueado para este usuario"}
+                <div className="line-chart-shell">
+                  <div className="line-chart-canvas">
+                    <svg
+                      className="line-chart"
+                      role="img"
+                      aria-label="Grafico de evolucao de receita"
+                      viewBox={`0 0 ${reportRevenueChart.width} ${reportRevenueChart.height}`}
                     >
-                      <strong>{company.shortName}</strong>
-                      {allowed ? (
-                        <>
-                          <span>{company.count} leads</span>
-                          <small>{company.open} abertos</small>
-                          <small>{company.won} ganhos</small>
-                          <em>{currency.format(company.value)}</em>
-                        </>
-                      ) : (
-                        <>
-                          <span className="locked-text">Bloqueado</span>
-                          <span className="lock-icon" aria-hidden="true" />
-                        </>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </article>
+                      <defs>
+                        <linearGradient id="revenueArea" x1="0" x2="0" y1="0" y2="1">
+                          <stop offset="0%" stopColor="#f6b21a" stopOpacity="0.38" />
+                          <stop offset="100%" stopColor="#f6b21a" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path className="line-chart-area" d={reportRevenueChart.area} />
+                      <polyline className="line-chart-line" points={reportRevenueChart.line} />
+                      {reportRevenueChart.points.map((point) => {
+                        const pointValueLabel = currency.format(point.value);
+                        const tooltipBelow = point.y < 72;
+
+                        return (
+                          <g
+                            aria-label={`${point.label}: ${pointValueLabel}`}
+                            className="line-chart-point-group"
+                            key={`${point.key}-${point.label}`}
+                            onBlur={() => setRevenueTooltip(null)}
+                            onFocus={() =>
+                              setRevenueTooltip({
+                                below: tooltipBelow,
+                                key: point.key,
+                                label: point.label,
+                                value: point.value,
+                                x: point.x,
+                                y: point.y,
+                              })
+                            }
+                            onMouseEnter={() =>
+                              setRevenueTooltip({
+                                below: tooltipBelow,
+                                key: point.key,
+                                label: point.label,
+                                value: point.value,
+                                x: point.x,
+                                y: point.y,
+                              })
+                            }
+                            onMouseLeave={() => setRevenueTooltip(null)}
+                            role="img"
+                            tabIndex={0}
+                          >
+                            <circle
+                              className="line-chart-hit"
+                              cx={point.x}
+                              cy={point.y}
+                              r="24"
+                            />
+                            <circle
+                              className="line-chart-point"
+                              cx={point.x}
+                              cy={point.y}
+                              r="5"
+                            />
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {revenueTooltip ? (
+                      <div
+                        className={`line-chart-floating-tooltip${
+                          revenueTooltip.below ? " is-below" : ""
+                        }`}
+                        style={
+                          {
+                            "--tooltip-x": `${(revenueTooltip.x / reportRevenueChart.width) * 100}%`,
+                            "--tooltip-y": `${(revenueTooltip.y / reportRevenueChart.height) * 100}%`,
+                          } as CSSProperties
+                        }
+                      >
+                        <span>{revenueTooltip.label}</span>
+                        <strong>{currency.format(revenueTooltip.value)}</strong>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="chart-labels">
+                    {reportRevenueChart.points.map((point) => (
+                      <span key={point.key}>{point.label}</span>
+                    ))}
+                  </div>
+                </div>
+              </article>
+
+              <article className="analytics-card source-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Origem dos leads</span>
+                    <small>{reportLeads.length} leads rastreados</small>
+                  </div>
+                </div>
+
+                <div
+                  className="donut-chart"
+                  style={{ "--donut": reportSourceGradient } as CSSProperties}
+                >
+                  <div>
+                    <strong>{reportSourceSlices[0]?.percent ?? 0}%</strong>
+                    <span>{reportSourceSlices[0]?.source ?? "Sem dados"}</span>
+                  </div>
+                </div>
+
+                <div className="source-legend">
+                  {reportSourceSlices.map((item) => (
+                    <div className="source-legend-row" key={item.source}>
+                      <i style={{ background: item.color }} />
+                      <span>{item.source}</span>
+                      <strong>{item.percent}%</strong>
+                    </div>
+                  ))}
+                  {reportSourceSlices.length === 0 ? (
+                    <div className="empty-dark">Sem origem registrada</div>
+                  ) : null}
+                </div>
+              </article>
+            </div>
+
+            <div className="analytics-bottom-grid">
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Volume mensal</span>
+                    <small>Leads recebidos nos ultimos meses</small>
+                  </div>
+                </div>
+
+                <div className="monthly-bars">
+                  {(reportMonthlyReport.length > 0
+                    ? reportMonthlyReport
+                    : [
+                        {
+                          key: "sem-data",
+                          label: "Sem dados",
+                          leads: 0,
+                          proposals: 0,
+                          won: 0,
+                          value: 0,
+                        },
+                      ]
+                  ).map((item) => (
+                    <div className="monthly-bar-item" key={item.key}>
+                      <div>
+                        <i
+                          style={{
+                            height: `${Math.max(10, (item.leads / reportMonthlyMaxLeads) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <strong>{item.leads}</strong>
+                      <span>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Etapas do funil</span>
+                    <small>Distribuicao dos cards atuais</small>
+                  </div>
+                </div>
+
+                <div className="funnel-bars">
+                  {reportStageTotals.map((stage) => (
+                    <div className="funnel-bar" data-tone={stage.tone} key={stage.key}>
+                      <div>
+                        <span>{stage.label}</span>
+                        <strong>{stage.count}</strong>
+                      </div>
+                      <small>
+                        <i
+                          style={{
+                            width: `${Math.max(5, (stage.count / reportStageMaxCount) * 100)}%`,
+                          }}
+                        />
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Motivos de perda</span>
+                    <small>{reportMetrics.lost} leads perdidos</small>
+                  </div>
+                </div>
+
+                <div className="dark-list">
+                  {reportLossTotals.slice(0, 5).map((item) => (
+                    <div className="dark-list-row" key={item.reason}>
+                      <span>{item.reason}</span>
+                      <strong>{item.count}</strong>
+                    </div>
+                  ))}
+                  {reportLossTotals.length === 0 ? (
+                    <div className="empty-dark">Sem perdas registradas</div>
+                  ) : null}
+                </div>
+              </article>
+
+              <article className="analytics-card">
+                <div className="analytics-card-heading">
+                  <div>
+                    <span>Visao por empresa</span>
+                    <small>{reportFilteredAllowedLeads.length} leads filtrados</small>
+                  </div>
+                </div>
+
+                <div className="company-dashboard-list">
+                  {companyTotals.map((company) => {
+                    const allowed = companyIsAllowed(permission, company.key);
+
+                    return (
+                      <button
+                        className={`company-dashboard-row ${
+                          reportScope !== "all" && reportScope === company.key ? "selected" : ""
+                        } ${allowed ? "" : "locked"}`}
+                        disabled={!allowed}
+                        key={company.key}
+                        onClick={() => setReportScope(company.key)}
+                        style={{ "--company-accent": company.accent } as CSSProperties}
+                        title={
+                          allowed
+                            ? company.name
+                            : "Relatorio bloqueado para este usuario"
+                        }
+                        type="button"
+                      >
+                        <i />
+                        <span>{company.shortName}</span>
+                        {allowed ? (
+                          <>
+                            <strong>{company.count}</strong>
+                            <small>{company.won} ganhos</small>
+                          </>
+                        ) : (
+                          <small>Bloqueado</small>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </article>
+            </div>
           </section>
         ) : null}
       </section>
@@ -2521,7 +3271,7 @@ export default function Home() {
                   value={form.source}
                   onChange={(event) => setForm({ ...form, source: event.target.value })}
                 >
-                  {sources.map((source) => (
+                  {sourceFormOptions.map((source) => (
                     <option key={source}>{source}</option>
                   ))}
                 </select>
