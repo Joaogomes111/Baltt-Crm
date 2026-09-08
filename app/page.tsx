@@ -15,9 +15,18 @@ import type { CrmUserPermission } from "../src/supabaseClient";
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
 type NavIconKey = "pipeline" | "leads" | "investment" | "reports";
+type MetricIconKey = "leads" | "proposal" | "sale" | "cost";
 type DateFilterKey = "7" | "30" | "90" | "all" | "custom";
 type LeadStageFilterKey = StageKey | "all";
 type ReportScopeKey = CompanyKey | "all";
+type RevenueTooltip = {
+  key: string;
+  label: string;
+  value: number;
+  x: number;
+  y: number;
+  below: boolean;
+};
 type StageKey =
   | "novo"
   | "qualificado"
@@ -916,6 +925,53 @@ function NavPictogram({ icon }: { icon: NavIconKey }) {
   );
 }
 
+function MetricPictogram({ icon }: { icon: MetricIconKey }) {
+  return (
+    <span className={`metric-pictogram metric-pictogram-${icon}`} aria-hidden="true">
+      <svg fill="none" viewBox="0 0 24 24">
+        {icon === "leads" ? (
+          <>
+            <path d="M4 5h16l-6.2 7.2v5.2l-3.6 1.8v-7L4 5Z" />
+            <circle cx="17" cy="17" r="2.5" />
+            <path d="M13.7 21c.5-1.8 1.6-2.8 3.3-2.8s2.8 1 3.3 2.8" />
+          </>
+        ) : null}
+        {icon === "proposal" ? (
+          <>
+            <path d="M6 3.5h8l4 4v13H6z" />
+            <path d="M14 3.5v4h4" />
+            <path d="M9 11.5h5.5" />
+            <path d="M9 14.8h4" />
+            <path d="m14.6 18.2 2.8-2.8 1.5 1.5-2.8 2.8-2 .5.5-2Z" />
+          </>
+        ) : null}
+        {icon === "sale" ? (
+          <>
+            <circle cx="12" cy="12" r="8" />
+            <path d="m8.2 12.2 2.4 2.4 5.2-5.4" />
+            <path d="M7.5 20h9" />
+            <path d="M12 20v-2.2" />
+          </>
+        ) : null}
+        {icon === "cost" ? (
+          <>
+            <rect x="5" y="3.5" width="14" height="17" rx="2" />
+            <path d="M8 7.5h8" />
+            <path d="M8 11h2" />
+            <path d="M12 11h2" />
+            <path d="M16 11h.1" />
+            <path d="M8 14.3h2" />
+            <path d="M12 14.3h2" />
+            <path d="M16 14.3h.1" />
+            <path d="M8 17.6h2" />
+            <path d="M12 17.6h4" />
+          </>
+        ) : null}
+      </svg>
+    </span>
+  );
+}
+
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>(() => {
     if (supabaseEnabled) return "checking";
@@ -958,6 +1014,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<ViewKey>("funis");
   const [query, setQuery] = useState("");
   const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  const [revenueTooltip, setRevenueTooltip] = useState<RevenueTooltip | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilterKey>("90");
   const [customDateStart, setCustomDateStart] = useState("");
   const [customDateEnd, setCustomDateEnd] = useState("");
@@ -2129,21 +2186,25 @@ export default function Home() {
 
         <section className="metrics-grid" aria-label="Indicadores">
           <article className="metric">
+            <MetricPictogram icon="leads" />
             <span>Leads no funil</span>
             <strong>{headerMetrics.total}</strong>
             <small>{headerMetrics.pipeline} em andamento</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="proposal" />
             <span>Propostas abertas</span>
             <strong>{currency.format(headerMetrics.proposalValue)}</strong>
             <small>{headerMetrics.qualified}% qualificados</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="sale" />
             <span>Vendas fechadas</span>
             <strong>{currency.format(headerMetrics.wonValue)}</strong>
             <small>{headerMetrics.conversion}% conversao</small>
           </article>
           <article className="metric">
+            <MetricPictogram icon="cost" />
             <span>Custo base por lead</span>
             <strong>{currency.format(headerLeadCost)}</strong>
             <small>Meta + Google no periodo</small>
@@ -2843,34 +2904,89 @@ export default function Home() {
                 </div>
 
                 <div className="line-chart-shell">
-                  <svg
-                    className="line-chart"
-                    role="img"
-                    aria-label="Grafico de evolucao de receita"
-                    viewBox={`0 0 ${reportRevenueChart.width} ${reportRevenueChart.height}`}
-                  >
-                    <defs>
-                      <linearGradient id="revenueArea" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="#f6b21a" stopOpacity="0.38" />
-                        <stop offset="100%" stopColor="#f6b21a" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path className="line-chart-area" d={reportRevenueChart.area} />
-                    <polyline className="line-chart-line" points={reportRevenueChart.line} />
-                    {reportRevenueChart.points.map((point) => (
-                      <circle
-                        className="line-chart-point"
-                        cx={point.x}
-                        cy={point.y}
-                        key={`${point.key}-${point.label}`}
-                        r="5"
+                  <div className="line-chart-canvas">
+                    <svg
+                      className="line-chart"
+                      role="img"
+                      aria-label="Grafico de evolucao de receita"
+                      viewBox={`0 0 ${reportRevenueChart.width} ${reportRevenueChart.height}`}
+                    >
+                      <defs>
+                        <linearGradient id="revenueArea" x1="0" x2="0" y1="0" y2="1">
+                          <stop offset="0%" stopColor="#f6b21a" stopOpacity="0.38" />
+                          <stop offset="100%" stopColor="#f6b21a" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path className="line-chart-area" d={reportRevenueChart.area} />
+                      <polyline className="line-chart-line" points={reportRevenueChart.line} />
+                      {reportRevenueChart.points.map((point) => {
+                        const pointValueLabel = currency.format(point.value);
+                        const tooltipBelow = point.y < 72;
+
+                        return (
+                          <g
+                            aria-label={`${point.label}: ${pointValueLabel}`}
+                            className="line-chart-point-group"
+                            key={`${point.key}-${point.label}`}
+                            onBlur={() => setRevenueTooltip(null)}
+                            onFocus={() =>
+                              setRevenueTooltip({
+                                below: tooltipBelow,
+                                key: point.key,
+                                label: point.label,
+                                value: point.value,
+                                x: point.x,
+                                y: point.y,
+                              })
+                            }
+                            onMouseEnter={() =>
+                              setRevenueTooltip({
+                                below: tooltipBelow,
+                                key: point.key,
+                                label: point.label,
+                                value: point.value,
+                                x: point.x,
+                                y: point.y,
+                              })
+                            }
+                            onMouseLeave={() => setRevenueTooltip(null)}
+                            role="img"
+                            tabIndex={0}
+                          >
+                            <circle
+                              className="line-chart-hit"
+                              cx={point.x}
+                              cy={point.y}
+                              r="24"
+                            />
+                            <circle
+                              className="line-chart-point"
+                              cx={point.x}
+                              cy={point.y}
+                              r="5"
+                            />
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {revenueTooltip ? (
+                      <div
+                        className={`line-chart-floating-tooltip${
+                          revenueTooltip.below ? " is-below" : ""
+                        }`}
+                        style={
+                          {
+                            "--tooltip-x": `${(revenueTooltip.x / reportRevenueChart.width) * 100}%`,
+                            "--tooltip-y": `${(revenueTooltip.y / reportRevenueChart.height) * 100}%`,
+                          } as CSSProperties
+                        }
                       >
-                        <title>
-                          {point.label}: {currency.format(point.value)}
-                        </title>
-                      </circle>
-                    ))}
-                  </svg>
+                        <span>{revenueTooltip.label}</span>
+                        <strong>{currency.format(revenueTooltip.value)}</strong>
+                      </div>
+                    ) : null}
+                  </div>
 
                   <div className="chart-labels">
                     {reportRevenueChart.points.map((point) => (
