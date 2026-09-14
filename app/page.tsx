@@ -1054,6 +1054,11 @@ export default function Home() {
   const loadingRemoteRef = useRef(false);
   const latestLeadsRef = useRef(leads);
   const latestInvestmentsRef = useRef(investments);
+  // Ids apagados pelo usuario e ainda nao confirmados na Supabase.
+  const pendingDeletedIdsRef = useRef<Set<string>>(new Set());
+  // Quando true, a proxima mudanca de leads/investimentos veio da Supabase e
+  // nao precisa ser salva de volta.
+  const skipNextSaveRef = useRef(false);
 
   useEffect(() => {
     latestLeadsRef.current = leads;
@@ -1112,30 +1117,27 @@ export default function Home() {
         const snapshot = await loadCrmSnapshot();
         if (cancelled) return;
 
-        if (snapshot) {
-          const nextPermission = normalizePermission(snapshot.permission);
-          const remoteLeads = snapshot.leads as Lead[];
-          const remoteInvestments = normalizeInvestments(snapshot.investments);
+        const nextPermission = normalizePermission(snapshot.permission);
+        const remoteLeads = snapshot.leads as Lead[];
+        const remoteInvestments = normalizeInvestments(snapshot.investments);
 
-          setPermission(nextPermission);
-          setActiveCompany((current) =>
-            companyIsAllowed(nextPermission, current)
-              ? current
-              : firstAllowedCompany(nextPermission),
-          );
+        setPermission(nextPermission);
+        setActiveCompany((current) =>
+          companyIsAllowed(nextPermission, current)
+            ? current
+            : firstAllowedCompany(nextPermission),
+        );
 
-          setLeads(remoteLeads);
-          setSelectedLeadId(remoteLeads[0]?.id ?? null);
-          setInvestments(remoteInvestments);
-        } else {
-          setPermission(adminPermission);
-        }
+        // A base remota e a fonte da verdade: substitui o que estava no navegador.
+        pendingDeletedIdsRef.current = new Set();
+        skipNextSaveRef.current = true;
+        setLeads(remoteLeads);
+        setSelectedLeadId(remoteLeads[0]?.id ?? null);
+        setInvestments(remoteInvestments);
 
-        if (!cancelled) {
-          remoteReadyRef.current = true;
-          setSyncState("shared");
-          setSyncMessage("Base Supabase ativa");
-        }
+        remoteReadyRef.current = true;
+        setSyncState("shared");
+        setSyncMessage("Base Supabase ativa");
       } catch (error) {
         if (!cancelled) {
           console.error("[Baltt CRM] Falha ao carregar a Supabase", error);
@@ -1165,12 +1167,31 @@ export default function Home() {
       return;
     }
 
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
     const saveTimer = window.setTimeout(() => {
       setSyncState("saving");
       setSyncMessage("Salvando na Supabase...");
 
-      saveCrmSnapshot({ leads, investments })
-        .then(() => {
+      const deletedLeadIds = Array.from(pendingDeletedIdsRef.current);
+
+      saveCrmSnapshot({ leads, investments, deletedLeadIds })
+        .then((snapshot) => {
+          deletedLeadIds.forEach((id) => pendingDeletedIdsRef.current.delete(id));
+
+          // Se o usuario nao mexeu em nada enquanto salvava, aplica a base
+          // mesclada que voltou do banco (inclui leads que chegaram por webhook).
+          if (latestLeadsRef.current === leads) {
+            const mergedLeads = snapshot.leads as Lead[];
+            if (JSON.stringify(mergedLeads) !== JSON.stringify(leads)) {
+              skipNextSaveRef.current = true;
+              setLeads(mergedLeads);
+            }
+          }
+
           setSyncState("shared");
           setSyncMessage("Base Supabase ativa");
         })
@@ -1183,6 +1204,63 @@ export default function Home() {
 
     return () => window.clearTimeout(saveTimer);
   }, [leads, investments, authState]);
+
+  // Recarrega a base quando a aba volta ao foco (e a cada 60s), para mostrar
+  // leads novos da Meta/site sem precisar dar F5. So roda quando nao ha
+  // alteracao pendente, para nao descartar o que o usuario esta editando.
+  useEffect(() => {
+    if (!supabaseEnabled || authState !== "authenticated") return;
+
+    let busy = false;
+
+    async function refreshRemoteData() {
+      if (
+        busy ||
+        document.visibilityState !== "visible" ||
+        !remoteReadyRef.current ||
+        loadingRemoteRef.current ||
+        syncState !== "shared" ||
+        pendingDeletedIdsRef.current.size > 0
+      ) {
+        return;
+      }
+
+      busy = true;
+      try {
+        const snapshot = await loadCrmSnapshot();
+        const remoteLeads = snapshot.leads as Lead[];
+        const remoteInvestments = normalizeInvestments(snapshot.investments);
+
+        if (syncState !== "shared") return;
+
+        if (JSON.stringify(remoteLeads) !== JSON.stringify(latestLeadsRef.current)) {
+          skipNextSaveRef.current = true;
+          setLeads(remoteLeads);
+        }
+        if (
+          JSON.stringify(remoteInvestments) !==
+          JSON.stringify(latestInvestmentsRef.current)
+        ) {
+          skipNextSaveRef.current = true;
+          setInvestments(remoteInvestments);
+        }
+      } catch (error) {
+        console.warn("[Baltt CRM] Falha ao atualizar a base em segundo plano", error);
+      } finally {
+        busy = false;
+      }
+    }
+
+    const interval = window.setInterval(refreshRemoteData, 60_000);
+    window.addEventListener("focus", refreshRemoteData);
+    document.addEventListener("visibilitychange", refreshRemoteData);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshRemoteData);
+      document.removeEventListener("visibilitychange", refreshRemoteData);
+    };
+  }, [authState, syncState]);
 
   useEffect(() => {
     if (!selectedLeadId || activeView !== "funis") return;
@@ -1833,6 +1911,7 @@ export default function Home() {
     if (!confirmed) return;
 
     const idsToRemove = new Set(removableIds);
+    idsToRemove.forEach((id) => pendingDeletedIdsRef.current.add(id));
     setLeads((current) => current.filter((lead) => !idsToRemove.has(lead.id)));
     setSelectedLeadIds([]);
     if (selectedLeadId && idsToRemove.has(selectedLeadId)) setSelectedLeadId(null);
@@ -1887,6 +1966,7 @@ export default function Home() {
     if (supabaseEnabled) {
       signOutCrm().catch(() => undefined);
       remoteReadyRef.current = false;
+      pendingDeletedIdsRef.current = new Set();
     } else {
       window.localStorage.removeItem(AUTH_STORAGE_KEY);
     }
