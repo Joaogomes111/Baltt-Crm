@@ -98,7 +98,19 @@ function normalizePermission(raw: unknown): CrmUserPermission {
 }
 
 function normalizeSnapshotPayload(raw: unknown): CrmSnapshot {
-  const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      "A Supabase respondeu sem a base do CRM. Rode o SQL de supabase/schema.sql no SQL Editor.",
+    );
+  }
+
+  const value = raw as Record<string, unknown>;
+
+  if (value.permission === undefined && value.leads === undefined) {
+    throw new Error(
+      "Resposta inesperada da Supabase ao carregar a base. Rode o SQL de supabase/schema.sql.",
+    );
+  }
 
   return {
     leads: Array.isArray(value.leads) ? value.leads : [],
@@ -107,86 +119,59 @@ function normalizeSnapshotPayload(raw: unknown): CrmSnapshot {
   };
 }
 
-async function getAuthenticatedEmail() {
-  if (!supabase) return null;
-
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return null;
-
-  return data.user?.email ?? null;
-}
-
-function isMissingRpc(error: { code?: string; message?: string }) {
-  return (
-    error.code === "PGRST202" ||
-    error.message?.includes("load_crm_snapshot_for_user") ||
-    error.message?.includes("load_crm_snapshot_for_user_v2") ||
-    error.message?.includes("save_crm_snapshot_for_user") ||
-    error.message?.includes("save_crm_snapshot_for_user_v2")
-  );
-}
-
-async function loadCrmSnapshotFromTable(): Promise<CrmSnapshot | null> {
-  if (!supabase) return null;
-
-  const { data, error } = await supabase
-    .from("crm_snapshots")
-    .select("leads, investments")
-    .eq("id", "main")
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
-  return {
-    leads: Array.isArray(data.leads) ? data.leads : [],
-    investments: Array.isArray(data.investments) ? data.investments : [],
-    permission: adminPermission,
-  };
-}
-
-export async function loadCrmSnapshot(): Promise<CrmSnapshot | null> {
-  if (!supabase) return null;
-
-  const email = await getAuthenticatedEmail();
-  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user_v2", {
-    p_email: email,
-  });
-
-  if (!error) return normalizeSnapshotPayload(data);
-  if (isMissingRpc(error)) return loadCrmSnapshotFromTable();
-
-  throw error;
-}
-
-async function saveCrmSnapshotToTable(snapshot: Pick<CrmSnapshot, "leads" | "investments">) {
-  if (!supabase) return;
-
-  const { error } = await supabase.from("crm_snapshots").upsert({
-    id: "main",
-    leads: snapshot.leads,
-    investments: snapshot.investments,
-    updated_at: new Date().toISOString(),
-  });
-
-  if (error) throw error;
-}
-
-export async function saveCrmSnapshot(snapshot: Pick<CrmSnapshot, "leads" | "investments">) {
-  if (!supabase) return;
-
-  const email = await getAuthenticatedEmail();
-  const { error } = await supabase.rpc("save_crm_snapshot_for_user_v2", {
-    p_leads: snapshot.leads,
-    p_investments: snapshot.investments,
-    p_email: email,
-  });
-
-  if (!error) return;
-  if (isMissingRpc(error)) {
-    await saveCrmSnapshotToTable(snapshot);
-    return;
+function describeRpcError(error: { code?: string; message?: string; details?: string }) {
+  if (error.code === "PGRST202") {
+    return new Error(
+      "Funcao do CRM nao encontrada na Supabase. Rode o SQL atualizado de supabase/schema.sql no SQL Editor.",
+    );
   }
 
-  throw error;
+  if (error.code === "42501" || /permission denied/i.test(error.message ?? "")) {
+    return new Error(
+      "Usuario sem permissao para gravar na base. Confira a tabela crm_user_permissions.",
+    );
+  }
+
+  return new Error(error.message || "Falha desconhecida na Supabase.");
+}
+
+/**
+ * Carrega a base compartilhada. Nunca cai em leitura direta da tabela: se a
+ * funcao nao existir ou o usuario nao tiver permissao, o erro sobe para a UI,
+ * em vez de fingir que a base local e a base remota.
+ */
+export async function loadCrmSnapshot(): Promise<CrmSnapshot> {
+  if (!supabase) throw new Error("Supabase is not configured");
+
+  const { data, error } = await supabase.rpc("load_crm_snapshot_for_user");
+
+  if (error) throw describeRpcError(error);
+
+  return normalizeSnapshotPayload(data);
+}
+
+export type SaveCrmSnapshotInput = {
+  leads: unknown[];
+  investments: unknown[];
+  /** Ids que o usuario apagou desde o ultimo carregamento/salvamento. */
+  deletedLeadIds?: string[];
+};
+
+/**
+ * Salva a base. A funcao no banco faz o merge por id: leads que chegaram por
+ * webhook (Meta/site) enquanto o CRM estava aberto sao preservados, e apenas os
+ * ids listados em deletedLeadIds sao removidos. Retorna a base ja mesclada.
+ */
+export async function saveCrmSnapshot(input: SaveCrmSnapshotInput): Promise<CrmSnapshot> {
+  if (!supabase) throw new Error("Supabase is not configured");
+
+  const { data, error } = await supabase.rpc("save_crm_snapshot_for_user", {
+    p_leads: input.leads,
+    p_investments: input.investments,
+    p_deleted_ids: input.deletedLeadIds ?? [],
+  });
+
+  if (error) throw describeRpcError(error);
+
+  return normalizeSnapshotPayload(data);
 }
