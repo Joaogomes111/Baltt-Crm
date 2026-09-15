@@ -66,3 +66,19 @@ Correcao:
 O salvamento agora faz merge por id no banco: leads recebidos por webhook sao
 preservados e apenas os leads que o usuario excluiu sao removidos. O CRM
 tambem recarrega a base ao voltar para a aba e a cada 60 segundos.
+
+## 6. Transferir lead entre empresas (funis)
+
+No painel do lead ha o campo **"Transferir para outro funil"**. Ex.: o lead
+entrou na Baltt mas quer brita -> escolha "Vale Britagem". O lead sai do funil
+atual e entra no funil de destino na etapa "Novo", com uma anotacao de onde
+veio. Usuario de empresa pode transferir leads da propria empresa; admin
+transfere qualquer lead.
+
+Para ativar, rode uma vez no SQL Editor da Supabase:
+
+```txt
+supabase/transfer_lead.sql
+```
+
+(Tambem esta incluido no final de `supabase/schema.sql`.)
