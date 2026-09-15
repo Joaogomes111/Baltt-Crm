@@ -803,6 +803,11 @@ textarea {
 
 .lead-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* max-content: garante que a altura do card acompanhe o texto quando o nome
+     quebra em 2+ linhas (com "auto" o Chrome mantinha 164px e o selo do
+     rodape saia do card). */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 10px;
   flex: 1;
@@ -834,6 +839,9 @@ textarea {
 .lead-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   min-height: 164px;
   padding: 12px;
   border: 1px solid rgba(15, 39, 66, 0.12);
@@ -855,6 +863,27 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+}
+
+/* Conteudo longo (nome, cidade, valor) nunca empurra os selos para fora do card:
+   os itens quebram linha em vez de estourar a largura. */
+.card-top,
+.card-footer {
+  flex-wrap: wrap;
+}
+
+.card-top time,
+.card-footer .next-date,
+.card-footer .warm-alert {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.card-footer strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .company-chip {
@@ -890,6 +919,7 @@ textarea {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .card-meta {
@@ -897,8 +927,13 @@ textarea {
 }
 
 .card-meta span {
-  max-width: 50%;
+  flex: 1 1 0;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.card-meta span:last-child {
+  text-align: right;
 }
 
 .card-footer strong {
