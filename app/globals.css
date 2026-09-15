@@ -1019,6 +1019,30 @@ textarea {
   color: #fff;
 }
 
+.transfer-control {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted, #6b7280);
+}
+
+.transfer-control select {
+  min-height: 40px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.transfer-control select:disabled {
+  opacity: 0.6;
+}
+
 .lead-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
