@@ -175,3 +175,28 @@ export async function saveCrmSnapshot(input: SaveCrmSnapshotInput): Promise<CrmS
 
   return normalizeSnapshotPayload(data);
 }
+
+/**
+ * Transfere um lead para o funil de outra empresa. A funcao no banco valida a
+ * permissao (admin: qualquer lead; empresa: so leads da propria empresa) e
+ * devolve a base ja atualizada para o usuario atual.
+ */
+export async function transferCrmLead(leadId: string, company: string): Promise<CrmSnapshot> {
+  if (!supabase) throw new Error("Supabase is not configured");
+
+  const { data, error } = await supabase.rpc("transfer_crm_lead", {
+    p_lead_id: leadId,
+    p_company: company,
+  });
+
+  if (error) {
+    if (error.code === "PGRST202") {
+      throw new Error(
+        "Funcao de transferencia nao encontrada na Supabase. Rode supabase/transfer_lead.sql no SQL Editor.",
+      );
+    }
+    throw new Error(error.message || "Falha ao transferir o lead.");
+  }
+
+  return normalizeSnapshotPayload(data);
+}
