@@ -1967,11 +1967,11 @@ export default function Home() {
   }
 
   function removeLead(leadId: string) {
-    setLeads((current) =>
-      current.filter(
-        (lead) => lead.id !== leadId || !companyIsAllowed(permission, lead.company),
-      ),
-    );
+    const target = latestLeadsRef.current.find((lead) => lead.id === leadId);
+    if (!target || !companyIsAllowed(permission, target.company)) return;
+
+    pendingDeletedIdsRef.current.add(leadId);
+    setLeads((current) => current.filter((lead) => lead.id !== leadId));
     setSelectedLeadIds((current) => current.filter((id) => id !== leadId));
     if (selectedLeadId === leadId) setSelectedLeadId(null);
   }
