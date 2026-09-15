@@ -5,6 +5,7 @@ import type { CSSProperties, WheelEvent } from "react";
 import {
   loadCrmSnapshot,
   saveCrmSnapshot,
+  transferCrmLead,
   signInCrm,
   signOutCrm,
   supabase,
@@ -586,6 +587,12 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
+const defaultServiceByCompany: Record<CompanyKey, string> = {
+  baltt: "Terraplanagem",
+  vale: "Britas / Agregados",
+  baltec: "Pavers / Blocos",
+};
+
 function getCompany(key: CompanyKey) {
   return companies.find((company) => company.key === key) ?? companies[0];
 }
@@ -1059,6 +1066,8 @@ export default function Home() {
   // Quando true, a proxima mudanca de leads/investimentos veio da Supabase e
   // nao precisa ser salva de volta.
   const skipNextSaveRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
+  const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
 
   useEffect(() => {
     latestLeadsRef.current = leads;
@@ -1173,6 +1182,7 @@ export default function Home() {
     }
 
     const saveTimer = window.setTimeout(() => {
+      saveTimerRef.current = null;
       setSyncState("saving");
       setSyncMessage("Salvando na Supabase...");
 
@@ -1201,8 +1211,12 @@ export default function Home() {
           setSyncMessage(`Falha ao salvar: ${getErrorMessage(error)}`);
         });
     }, 550);
+    saveTimerRef.current = saveTimer;
 
-    return () => window.clearTimeout(saveTimer);
+    return () => {
+      window.clearTimeout(saveTimer);
+      if (saveTimerRef.current === saveTimer) saveTimerRef.current = null;
+    };
   }, [leads, investments, authState]);
 
   // Recarrega a base quando a aba volta ao foco (e a cada 60s), para mostrar
@@ -1814,6 +1828,87 @@ export default function Home() {
     });
 
     setLeads(nextLeads);
+  }
+
+  async function transferLead(lead: Lead, targetCompany: CompanyKey) {
+    if (lead.company === targetCompany) return;
+    if (!companyIsAllowed(permission, lead.company)) return;
+
+    const fromName = getCompany(lead.company).shortName;
+    const toName = getCompany(targetCompany).shortName;
+    const confirmed = window.confirm(
+      `Transferir "${lead.name}" de ${fromName} para ${toName}?\n\nO lead entra no funil de ${toName} na etapa "Novo".`,
+    );
+    if (!confirmed) return;
+
+    if (!supabaseEnabled) {
+      const todayLabel = new Date().toLocaleDateString("pt-BR");
+      setLeads((current) =>
+        current.map((item) =>
+          item.id === lead.id
+            ? {
+                ...item,
+                company: targetCompany,
+                stage: "novo",
+                leadStatus: "Novo",
+                closeDate: "",
+                lossReason: "",
+                owner: `Comercial ${toName}`,
+                service: ["", "Terraplanagem", "Britas / Agregados", "Pavers / Blocos"].includes(item.service)
+                  ? defaultServiceByCompany[targetCompany]
+                  : item.service,
+                notes: [item.notes, `Transferido de ${fromName} para ${toName} em ${todayLabel}`]
+                  .filter(Boolean)
+                  .join(" | "),
+                lastUpdate: `Transferido de ${fromName} em ${todayLabel}`,
+              }
+            : item,
+        ),
+      );
+      setSelectedLeadId(null);
+      return;
+    }
+
+    setTransferringLeadId(lead.id);
+    setSyncState("saving");
+    setSyncMessage(`Transferindo lead para ${toName}...`);
+
+    try {
+      // Garante que nenhuma edicao pendente seja gravada depois da transferencia
+      // (o que devolveria o lead para a empresa de origem).
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const deletedLeadIds = Array.from(pendingDeletedIdsRef.current);
+        await saveCrmSnapshot({
+          leads: latestLeadsRef.current,
+          investments: latestInvestmentsRef.current,
+          deletedLeadIds,
+        });
+        deletedLeadIds.forEach((id) => pendingDeletedIdsRef.current.delete(id));
+      }
+
+      const snapshot = await transferCrmLead(lead.id, targetCompany);
+      const nextLeads = snapshot.leads as Lead[];
+
+      skipNextSaveRef.current = true;
+      setLeads(nextLeads);
+      setSelectedLeadId(null);
+      setSyncState("shared");
+      setSyncMessage(`Lead transferido para ${toName}`);
+      window.setTimeout(() => {
+        setSyncMessage((current) =>
+          current === `Lead transferido para ${toName}` ? "Base Supabase ativa" : current,
+        );
+      }, 4000);
+    } catch (error) {
+      console.error("[Baltt CRM] Falha ao transferir lead", error);
+      setSyncState("error");
+      setSyncMessage(`Falha ao transferir: ${getErrorMessage(error)}`);
+      window.alert(`Nao foi possivel transferir o lead: ${getErrorMessage(error)}`);
+    } finally {
+      setTransferringLeadId(null);
+    }
   }
 
   function openNewLead() {
@@ -2559,6 +2654,35 @@ export default function Home() {
                     Editar
                   </button>
                 </div>
+
+                {companyIsAllowed(permission, selectedLead.company) ? (
+                  <label className="transfer-control">
+                    <span>Transferir para outro funil</span>
+                    <select
+                      value=""
+                      disabled={transferringLeadId === selectedLead.id}
+                      onChange={(event) => {
+                        const target = event.target.value as CompanyKey | "";
+                        if (target && isCompanyKey(target)) {
+                          void transferLead(selectedLead, target);
+                        }
+                      }}
+                    >
+                      <option value="">
+                        {transferringLeadId === selectedLead.id
+                          ? "Transferindo..."
+                          : "Escolher empresa..."}
+                      </option>
+                      {companies
+                        .filter((company) => company.key !== selectedLead.company)
+                        .map((company) => (
+                          <option key={company.key} value={company.key}>
+                            {company.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                ) : null}
 
                 <dl className="lead-fields">
                   <div>
