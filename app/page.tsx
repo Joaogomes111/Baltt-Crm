@@ -75,7 +75,8 @@ type LeadHistoryType =
   | "received"
   | "transfer"
   | "stage"
-  | "edit";
+  | "edit"
+  | "attempt";
 
 type LeadHistoryEntry = {
   at: string;
@@ -683,7 +684,49 @@ const historyTypeLabels: Record<LeadHistoryType, string> = {
   transfer: "Transferencia",
   stage: "Etapa",
   edit: "Edicao",
+  attempt: "Tentativa",
 };
+
+/** Regra comercial: antes de marcar "Sem retorno", 3 tentativas em 3 dias diferentes. */
+const MIN_CONTACT_ATTEMPTS = 3;
+const MIN_CONTACT_DAYS = 3;
+const NO_REPLY_LOSS_REASON = "Sem retorno";
+
+function contactAttempts(lead: Lead): LeadHistoryEntry[] {
+  return (lead.history ?? []).filter((entry) => entry.type === "attempt");
+}
+
+function contactAttemptDays(lead: Lead) {
+  const days = new Set(
+    contactAttempts(lead).map((entry) => {
+      const date = new Date(entry.at);
+      return Number.isNaN(date.getTime()) ? entry.at.slice(0, 10) : formatDateInput(date);
+    }),
+  );
+  return days.size;
+}
+
+function attemptsSummary(lead: Lead) {
+  const total = contactAttempts(lead).length;
+  const days = contactAttemptDays(lead);
+  if (total === 0) return "Nenhuma tentativa de contato registrada";
+  return `${total} tentativa${total > 1 ? "s" : ""} em ${days} dia${days > 1 ? "s" : ""}`;
+}
+
+/**
+ * Valida se o lead pode ser marcado como perdido com o motivo informado.
+ * "Sem retorno" exige o minimo de tentativas em dias diferentes.
+ */
+function lossBlockReason(lead: Lead, reason: string): string | null {
+  if (!reason.trim()) return "Escolha o motivo da perda.";
+  if (reason !== NO_REPLY_LOSS_REASON) return null;
+
+  const total = contactAttempts(lead).length;
+  const days = contactAttemptDays(lead);
+  if (total >= MIN_CONTACT_ATTEMPTS && days >= MIN_CONTACT_DAYS) return null;
+
+  return `Para marcar "Sem retorno" e preciso registrar pelo menos ${MIN_CONTACT_ATTEMPTS} tentativas de contato em ${MIN_CONTACT_DAYS} dias diferentes. Este lead tem ${total} tentativa${total === 1 ? "" : "s"} em ${days} dia${days === 1 ? "" : "s"}. Use o botao "Registrar tentativa de contato" e tente de novo nos proximos dias.`;
+}
 
 /**
  * Linha do tempo completa do lead: entradas gravadas + eventos deduzidos dos
@@ -1206,6 +1249,8 @@ export default function Home() {
   const skipNextSaveRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
+  const [lossDialog, setLossDialog] = useState<{ leadId: string } | null>(null);
+  const [lossDialogReason, setLossDialogReason] = useState("");
 
   useEffect(() => {
     latestLeadsRef.current = leads;
@@ -1948,9 +1993,16 @@ export default function Home() {
     );
   }
 
-  function moveLead(leadId: string, stage: StageKey) {
+  function moveLead(leadId: string, stage: StageKey, lossReason?: string) {
     const targetLead = leads.find((lead) => lead.id === leadId);
     if (!targetLead || !companyIsAllowed(permission, targetLead.company)) return;
+
+    // Marcar como perdido passa pela confirmacao com motivo (regra das 3 tentativas).
+    if (stage === "perdido" && targetLead.stage !== "perdido" && lossReason === undefined) {
+      setLossDialogReason(targetLead.lossReason || "");
+      setLossDialog({ leadId });
+      return;
+    }
 
     const nextLeads = leads.map((lead) => {
       if (lead.id !== leadId) return lead;
@@ -1964,16 +2016,60 @@ export default function Home() {
           lastUpdate: "Agora",
           closeDate:
             stage === "ganho" && !lead.closeDate ? formatDateInput(new Date()) : lead.closeDate,
+          ...(stage === "perdido" && lossReason ? { lossReason } : {}),
         },
         historyEntry(
           "stage",
-          `Etapa: ${stageLabel(lead.stage)} -> ${stageLabel(stage)}`,
+          `Etapa: ${stageLabel(lead.stage)} -> ${stageLabel(stage)}${
+            stage === "perdido" && lossReason ? ` (motivo: ${lossReason})` : ""
+          }`,
           actorLabel(permission.email),
         ),
       );
     });
 
     setLeads(nextLeads);
+  }
+
+  function confirmLoss() {
+    if (!lossDialog) return;
+    const targetLead = leads.find((lead) => lead.id === lossDialog.leadId);
+    if (!targetLead) {
+      setLossDialog(null);
+      return;
+    }
+    const blocked = lossBlockReason(targetLead, lossDialogReason);
+    if (blocked) return;
+
+    moveLead(targetLead.id, "perdido", lossDialogReason);
+    setLossDialog(null);
+  }
+
+  function registerContactAttempt(lead: Lead) {
+    if (!companyIsAllowed(permission, lead.company)) return;
+
+    const attemptNumber = contactAttempts(lead).length + 1;
+    setLeads((current) =>
+      current.map((item) =>
+        item.id === lead.id
+          ? withHistory(
+              {
+                ...item,
+                lastUpdate: "Agora",
+                contactStatus:
+                  item.contactStatus === "Aguardando primeiro contato"
+                    ? "Tentativa de contato"
+                    : item.contactStatus,
+              },
+              historyEntry(
+                "attempt",
+                `Tentativa de contato ${attemptNumber} (sem resposta)`,
+                actorLabel(permission.email),
+              ),
+            )
+          : item,
+      ),
+    );
   }
 
   async function transferLead(lead: Lead, targetCompany: CompanyKey) {
@@ -2093,6 +2189,18 @@ export default function Home() {
     if (!companyIsAllowed(permission, form.company)) return;
 
     const actor = actorLabel(permission.email);
+
+    // Regra das 3 tentativas tambem vale pelo formulario.
+    if (form.stage === "perdido" && (!editingLead || editingLead.stage !== "perdido")) {
+      const blocked = lossBlockReason(
+        editingLead ?? { ...emptyLead(form.company), id: "novo", lastUpdate: "", history: [] },
+        form.lossReason,
+      );
+      if (blocked) {
+        window.alert(blocked);
+        return;
+      }
+    }
 
     if (editingLead) {
       const previousForm = leadToForm(editingLead);
@@ -2816,6 +2924,19 @@ export default function Home() {
                             >
                               {company.shortName}
                             </span>
+                            {contactAttempts(lead).length > 0 && !["ganho", "perdido"].includes(lead.stage) ? (
+                              <span
+                                className={`attempts-chip ${
+                                  contactAttempts(lead).length >= MIN_CONTACT_ATTEMPTS &&
+                                  contactAttemptDays(lead) >= MIN_CONTACT_DAYS
+                                    ? "complete"
+                                    : ""
+                                }`}
+                                title={attemptsSummary(lead)}
+                              >
+                                {contactAttempts(lead).length}/{MIN_CONTACT_ATTEMPTS} tent.
+                              </span>
+                            ) : null}
                             <time>{formatDate(lead.arrivalDate)}</time>
                           </div>
                           <h3>{lead.name}</h3>
@@ -2874,6 +2995,22 @@ export default function Home() {
                     Editar
                   </button>
                 </div>
+
+                {companyIsAllowed(permission, selectedLead.company) &&
+                !["ganho", "perdido"].includes(selectedLead.stage) ? (
+                  <div className="attempt-control">
+                    <button
+                      type="button"
+                      className="attempt-button"
+                      onClick={() => registerContactAttempt(selectedLead)}
+                    >
+                      Registrar tentativa de contato
+                    </button>
+                    <small>
+                      {attemptsSummary(selectedLead)}. Para marcar &quot;Sem retorno&quot;: {MIN_CONTACT_ATTEMPTS} tentativas em {MIN_CONTACT_DAYS} dias.
+                    </small>
+                  </div>
+                ) : null}
 
                 {companyIsAllowed(permission, selectedLead.company) ? (
                   <label className="transfer-control">
@@ -3606,6 +3743,68 @@ export default function Home() {
           </section>
         ) : null}
       </section>
+
+      {lossDialog ? (
+        (() => {
+          const lossLead = leads.find((lead) => lead.id === lossDialog.leadId);
+          if (!lossLead) return null;
+          const blocked = lossBlockReason(lossLead, lossDialogReason);
+          return (
+            <div className="modal-backdrop" role="dialog" aria-modal="true">
+              <div className="lead-modal loss-modal">
+                <header>
+                  <div>
+                    <p className="eyebrow">Marcar como perdido</p>
+                    <h2>{lossLead.name}</h2>
+                  </div>
+                  <button type="button" onClick={() => setLossDialog(null)} title="Fechar">
+                    X
+                  </button>
+                </header>
+                <div className="loss-body">
+                  <p className="loss-summary">
+                    Entrou em {formatDate(lossLead.arrivalDate)} · {attemptsSummary(lossLead)}.
+                  </p>
+                  <label>
+                    Motivo da perda
+                    <select
+                      value={lossDialogReason}
+                      onChange={(event) => setLossDialogReason(event.target.value)}
+                    >
+                      {lossReasons.map((reason) => (
+                        <option key={reason} value={reason}>
+                          {reason || "Escolher motivo..."}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {blocked ? (
+                    <p className="loss-blocked">{blocked}</p>
+                  ) : (
+                    <p className="loss-ok">O lead vai para a coluna &quot;Perdido&quot; com este motivo registrado no historico.</p>
+                  )}
+                </div>
+                <footer>
+                  <span />
+                  <div>
+                    <button type="button" onClick={() => setLossDialog(null)}>
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      disabled={Boolean(blocked)}
+                      onClick={confirmLoss}
+                    >
+                      Confirmar perda
+                    </button>
+                  </div>
+                </footer>
+              </div>
+            </div>
+          );
+        })()
+      ) : null}
 
       {modalOpen ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
