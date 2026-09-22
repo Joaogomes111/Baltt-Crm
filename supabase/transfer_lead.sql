@@ -98,7 +98,17 @@ begin
     ),
     'lastUpdate', 'Transferido de ' || from_label || ' em ' || today_label,
     'transferredFrom', from_company,
-    'transferredAt', to_char(timezone('America/Sao_Paulo', now()), 'YYYY-MM-DD')
+    'transferredAt', to_char(timezone('America/Sao_Paulo', now()), 'YYYY-MM-DD'),
+    -- Historico do lead (exibido no painel do CRM)
+    'history', coalesce(
+      case when jsonb_typeof(lead_item -> 'history') = 'array' then lead_item -> 'history' else '[]'::jsonb end,
+      '[]'::jsonb
+    ) || jsonb_build_array(jsonb_build_object(
+      'at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'type', 'transfer',
+      'text', 'Transferido de ' || from_label || ' para ' || to_label,
+      'by', split_part(coalesce(auth.jwt() ->> 'email', ''), '@', 1)
+    ))
   );
 
   update public.crm_snapshots
