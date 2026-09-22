@@ -1134,6 +1134,80 @@ textarea {
   gap: 8px;
 }
 
+.history-box {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f6f8fa;
+}
+
+.history-box > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding-left: 10px;
+  border-left: 3px solid #b9c2ce;
+}
+
+.history-item.transfer {
+  border-left-color: var(--amber);
+}
+
+.history-item.stage {
+  border-left-color: var(--blue);
+}
+
+.history-item.created,
+.history-item.imported,
+.history-item.received {
+  border-left-color: var(--green);
+}
+
+.history-item time {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.history-item strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.history-item p {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.history-item small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .playbook label {
   display: flex;
   align-items: center;
@@ -3139,6 +3213,7 @@ select {
 
 .lead-fields div,
 .notes-box,
+.history-box,
 .playbook,
 .report-row,
 .bulk-toolbar,
