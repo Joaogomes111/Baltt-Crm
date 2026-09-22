@@ -62,9 +62,29 @@ type Lead = {
   nextFollowUp: string;
   notes: string;
   lastUpdate: string;
+  /** Empresa de origem, quando o lead foi transferido de outro funil. */
+  transferredFrom?: string;
+  transferredAt?: string;
+  /** Linha do tempo do lead (cadastro, etapas, edicoes, transferencias). */
+  history?: LeadHistoryEntry[];
 };
 
-type LeadForm = Omit<Lead, "id" | "lastUpdate">;
+type LeadHistoryType =
+  | "created"
+  | "imported"
+  | "received"
+  | "transfer"
+  | "stage"
+  | "edit";
+
+type LeadHistoryEntry = {
+  at: string;
+  type: LeadHistoryType;
+  text: string;
+  by?: string;
+};
+
+type LeadForm = Omit<Lead, "id" | "lastUpdate" | "history" | "transferredFrom" | "transferredAt">;
 type Investment = {
   id: string;
   month: string;
@@ -595,6 +615,124 @@ const defaultServiceByCompany: Record<CompanyKey, string> = {
 
 function getCompany(key: CompanyKey) {
   return companies.find((company) => company.key === key) ?? companies[0];
+}
+
+function companyShortName(key: string | null | undefined) {
+  return isCompanyKey(key) ? getCompany(key).shortName : key || "?";
+}
+
+function stageLabel(stage: string) {
+  return stages.find((item) => item.key === stage)?.label ?? stage;
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const leadFieldLabels: Partial<Record<keyof LeadForm, string>> = {
+  company: "empresa",
+  stage: "etapa",
+  arrivalDate: "data de entrada",
+  name: "nome",
+  phone: "telefone",
+  email: "e-mail",
+  city: "cidade",
+  neighborhood: "bairro",
+  source: "origem",
+  campaign: "campanha",
+  service: "servico",
+  customerType: "tipo de cliente",
+  contactStatus: "status de contato",
+  leadStatus: "status do lead",
+  lossReason: "motivo da perda",
+  budgetSent: "orcamento enviado",
+  proposalValue: "valor da proposta",
+  closeDate: "data de fechamento",
+  qualified: "qualificacao",
+  urgency: "urgencia",
+  owner: "responsavel",
+  nextFollowUp: "follow-up",
+  notes: "observacoes",
+};
+
+function historyEntry(
+  type: LeadHistoryType,
+  text: string,
+  by?: string | null,
+): LeadHistoryEntry {
+  return {
+    at: new Date().toISOString(),
+    type,
+    text,
+    ...(by ? { by } : {}),
+  };
+}
+
+function withHistory(lead: Lead, ...entries: LeadHistoryEntry[]): Lead {
+  const history = [...(lead.history ?? []), ...entries];
+  return { ...lead, history: history.slice(-120) };
+}
+
+const historyTypeLabels: Record<LeadHistoryType, string> = {
+  created: "Cadastro",
+  imported: "Importacao",
+  received: "Entrada",
+  transfer: "Transferencia",
+  stage: "Etapa",
+  edit: "Edicao",
+};
+
+/**
+ * Linha do tempo completa do lead: entradas gravadas + eventos deduzidos dos
+ * dados (entrada pela origem, transferencia antiga sem historico).
+ */
+function buildLeadTimeline(lead: Lead): LeadHistoryEntry[] {
+  const stored = Array.isArray(lead.history) ? lead.history : [];
+  const timeline: LeadHistoryEntry[] = [...stored];
+
+  const hasEntryEvent = stored.some((entry) =>
+    ["created", "imported", "received"].includes(entry.type),
+  );
+  if (!hasEntryEvent) {
+    const originCompany = isCompanyKey(lead.transferredFrom)
+      ? lead.transferredFrom
+      : lead.company;
+    timeline.push({
+      at: `${normalizeDate(lead.arrivalDate)}T00:00:00`,
+      type: "received",
+      text: `Entrou no funil ${getCompany(originCompany).shortName} via ${sourceDisplayValue(lead.source)}`,
+    });
+  }
+
+  if (lead.transferredFrom && !stored.some((entry) => entry.type === "transfer")) {
+    timeline.push({
+      at: `${normalizeDate(lead.transferredAt || lead.arrivalDate)}T00:00:01`,
+      type: "transfer",
+      text: `Transferido de ${companyShortName(lead.transferredFrom)} para ${getCompany(lead.company).shortName}`,
+    });
+  }
+
+  return timeline.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
+function formatHistoryDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const dateOnly = /T00:00:0[01]$/.test(value);
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    ...(dateOnly ? {} : { hour: "2-digit", minute: "2-digit" }),
+  }).format(date);
+}
+
+function actorLabel(email: string | null | undefined) {
+  if (!email) return undefined;
+  return email.split("@")[0];
 }
 
 function getErrorMessage(error: unknown) {
@@ -1816,15 +1954,23 @@ export default function Home() {
 
     const nextLeads = leads.map((lead) => {
       if (lead.id !== leadId) return lead;
+      if (lead.stage === stage) return lead;
 
-      return {
-        ...lead,
-        stage,
-        leadStatus: statusFromStage(stage),
-        lastUpdate: "Agora",
-        closeDate:
-          stage === "ganho" && !lead.closeDate ? "2026-08-19" : lead.closeDate,
-      };
+      return withHistory(
+        {
+          ...lead,
+          stage,
+          leadStatus: statusFromStage(stage),
+          lastUpdate: "Agora",
+          closeDate:
+            stage === "ganho" && !lead.closeDate ? formatDateInput(new Date()) : lead.closeDate,
+        },
+        historyEntry(
+          "stage",
+          `Etapa: ${stageLabel(lead.stage)} -> ${stageLabel(stage)}`,
+          actorLabel(permission.email),
+        ),
+      );
     });
 
     setLeads(nextLeads);
@@ -1861,6 +2007,16 @@ export default function Home() {
                   .filter(Boolean)
                   .join(" | "),
                 lastUpdate: `Transferido de ${fromName} em ${todayLabel}`,
+                transferredFrom: item.company,
+                transferredAt: formatDateInput(new Date()),
+                history: [
+                  ...(item.history ?? []),
+                  historyEntry(
+                    "transfer",
+                    `Transferido de ${fromName} para ${toName}`,
+                    actorLabel(permission.email),
+                  ),
+                ],
               }
             : item,
         ),
@@ -1936,13 +2092,61 @@ export default function Home() {
     if (!form.name.trim()) return;
     if (!companyIsAllowed(permission, form.company)) return;
 
+    const actor = actorLabel(permission.email);
+
     if (editingLead) {
-      const updatedLead = {
-        ...editingLead,
-        ...form,
-        leadStatus: form.leadStatus || statusFromStage(form.stage),
-        lastUpdate: "Agora",
-      };
+      const previousForm = leadToForm(editingLead);
+      const changedFields = (Object.keys(form) as Array<keyof LeadForm>).filter(
+        (key) => String(form[key] ?? "") !== String(previousForm[key] ?? ""),
+      );
+      const entries: LeadHistoryEntry[] = [];
+
+      if (form.company !== editingLead.company) {
+        entries.push(
+          historyEntry(
+            "transfer",
+            `Transferido de ${getCompany(editingLead.company).shortName} para ${getCompany(form.company).shortName} (pelo formulario)`,
+            actor,
+          ),
+        );
+      }
+      if (form.stage !== editingLead.stage) {
+        entries.push(
+          historyEntry(
+            "stage",
+            `Etapa: ${stageLabel(editingLead.stage)} -> ${stageLabel(form.stage)}`,
+            actor,
+          ),
+        );
+      }
+      const otherChanges = changedFields.filter(
+        (key) =>
+          key !== "company" &&
+          key !== "stage" &&
+          !(key === "leadStatus" && form.stage !== editingLead.stage),
+      );
+      if (otherChanges.length > 0) {
+        entries.push(
+          historyEntry(
+            "edit",
+            `Editado: ${otherChanges.map((key) => leadFieldLabels[key] ?? key).join(", ")}`,
+            actor,
+          ),
+        );
+      }
+
+      const updatedLead = withHistory(
+        {
+          ...editingLead,
+          ...form,
+          leadStatus: form.leadStatus || statusFromStage(form.stage),
+          lastUpdate: "Agora",
+          ...(form.company !== editingLead.company
+            ? { transferredFrom: editingLead.company, transferredAt: formatDateInput(new Date()) }
+            : {}),
+        },
+        ...entries,
+      );
       setLeads((current) =>
         current.map((lead) =>
           lead.id === editingLead.id ? updatedLead : lead,
@@ -1952,12 +2156,19 @@ export default function Home() {
       setActiveCompany(form.company);
     } else {
       const id = makeClientId("lead");
-      const newLead = {
-        id,
-        ...form,
-        leadStatus: form.leadStatus || statusFromStage(form.stage),
-        lastUpdate: "Agora",
-      };
+      const newLead = withHistory(
+        {
+          id,
+          ...form,
+          leadStatus: form.leadStatus || statusFromStage(form.stage),
+          lastUpdate: "Agora",
+        },
+        historyEntry(
+          "created",
+          `Cadastrado manualmente no funil ${getCompany(form.company).shortName}`,
+          actor,
+        ),
+      );
       setLeads((current) => [newLead, ...current]);
       setSelectedLeadId(id);
       setActiveCompany(form.company);
@@ -2017,7 +2228,16 @@ export default function Home() {
 
     const reader = new FileReader();
     reader.onload = () => {
-      const imported = mapCsvRows(String(reader.result ?? ""), activeCompany);
+      const imported = mapCsvRows(String(reader.result ?? ""), activeCompany).map((lead) =>
+        withHistory(
+          lead,
+          historyEntry(
+            "imported",
+            `Importado de planilha (${file.name})`,
+            actorLabel(permission.email),
+          ),
+        ),
+      );
       if (imported.length > 0) {
         setLeads((current) => [...imported, ...current]);
         setSelectedLeadId(imported[0].id);
@@ -2726,6 +2946,22 @@ export default function Home() {
                 <div className="notes-box">
                   <span>Observacoes</span>
                   <p>{selectedLead.notes || "Sem observacoes registradas."}</p>
+                </div>
+
+                <div className="history-box">
+                  <span>Historico do lead</span>
+                  <ol className="history-list">
+                    {buildLeadTimeline(selectedLead).map((entry, index) => (
+                      <li key={`${entry.at}-${index}`} className={`history-item ${entry.type}`}>
+                        <time dateTime={entry.at}>{formatHistoryDate(entry.at)}</time>
+                        <div>
+                          <strong>{historyTypeLabels[entry.type] ?? entry.type}</strong>
+                          <p>{entry.text}</p>
+                          {entry.by ? <small>por {entry.by}</small> : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
 
                 <div className="playbook">
