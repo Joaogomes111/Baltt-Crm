@@ -83,13 +83,12 @@ supabase/transfer_lead.sql
 
 (Tambem esta incluido no final de `supabase/schema.sql`.)
 
-## 7. Tentativas de contato e regra do "Perdido"
+## 7. Tentativas de contato e motivo da perda
 
 - No painel do lead: botao **"Registrar tentativa de contato"** (um clique por
-  tentativa). O card mostra "1/3 tent.", e cada tentativa fica no historico com
-  quem fez.
+  tentativa). O card mostra "2 tent.", e cada tentativa fica no historico com
+  quem fez e quando.
 - Para mover um lead para **Perdido** (arrastando ou pelo formulario) e
-  obrigatorio escolher o motivo. O motivo **"Sem retorno"** so e aceito com
-  pelo menos 3 tentativas em 3 dias diferentes; os outros motivos (Preco,
-  Fechou com concorrente, Fora da regiao...) liberam na hora.
-- A regra vale para todos os usuarios, inclusive admin.
+  obrigatorio escolher o motivo (Sem retorno, Preco, Fechou com concorrente...).
+  O motivo vai para o historico e para o relatorio de perdas. Nao ha bloqueio
+  por quantidade de tentativas.
