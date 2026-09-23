@@ -687,10 +687,8 @@ const historyTypeLabels: Record<LeadHistoryType, string> = {
   attempt: "Tentativa",
 };
 
-/** Regra comercial: antes de marcar "Sem retorno", 3 tentativas em 3 dias diferentes. */
-const MIN_CONTACT_ATTEMPTS = 3;
-const MIN_CONTACT_DAYS = 3;
-const NO_REPLY_LOSS_REASON = "Sem retorno";
+/** Meta comercial (orientativa): 3 tentativas em 3 dias antes de desistir. */
+const TARGET_CONTACT_ATTEMPTS = 3;
 
 function contactAttempts(lead: Lead): LeadHistoryEntry[] {
   return (lead.history ?? []).filter((entry) => entry.type === "attempt");
@@ -714,18 +712,13 @@ function attemptsSummary(lead: Lead) {
 }
 
 /**
- * Valida se o lead pode ser marcado como perdido com o motivo informado.
- * "Sem retorno" exige o minimo de tentativas em dias diferentes.
+ * Valida se o lead pode ser marcado como perdido: so exige o motivo.
+ * (A quantidade de tentativas de contato fica registrada no historico, mas
+ * nao bloqueia a perda.)
  */
-function lossBlockReason(lead: Lead, reason: string): string | null {
+function lossBlockReason(_lead: Lead, reason: string): string | null {
   if (!reason.trim()) return "Escolha o motivo da perda.";
-  if (reason !== NO_REPLY_LOSS_REASON) return null;
-
-  const total = contactAttempts(lead).length;
-  const days = contactAttemptDays(lead);
-  if (total >= MIN_CONTACT_ATTEMPTS && days >= MIN_CONTACT_DAYS) return null;
-
-  return `Para marcar "Sem retorno" e preciso registrar pelo menos ${MIN_CONTACT_ATTEMPTS} tentativas de contato em ${MIN_CONTACT_DAYS} dias diferentes. Este lead tem ${total} tentativa${total === 1 ? "" : "s"} em ${days} dia${days === 1 ? "" : "s"}. Use o botao "Registrar tentativa de contato" e tente de novo nos proximos dias.`;
+  return null;
 }
 
 /**
@@ -2927,14 +2920,11 @@ export default function Home() {
                             {contactAttempts(lead).length > 0 && !["ganho", "perdido"].includes(lead.stage) ? (
                               <span
                                 className={`attempts-chip ${
-                                  contactAttempts(lead).length >= MIN_CONTACT_ATTEMPTS &&
-                                  contactAttemptDays(lead) >= MIN_CONTACT_DAYS
-                                    ? "complete"
-                                    : ""
+                                  contactAttempts(lead).length >= TARGET_CONTACT_ATTEMPTS ? "complete" : ""
                                 }`}
                                 title={attemptsSummary(lead)}
                               >
-                                {contactAttempts(lead).length}/{MIN_CONTACT_ATTEMPTS} tent.
+                                {contactAttempts(lead).length} tent.
                               </span>
                             ) : null}
                             <time>{formatDate(lead.arrivalDate)}</time>
@@ -3007,7 +2997,7 @@ export default function Home() {
                       Registrar tentativa de contato
                     </button>
                     <small>
-                      {attemptsSummary(selectedLead)}. Para marcar &quot;Sem retorno&quot;: {MIN_CONTACT_ATTEMPTS} tentativas em {MIN_CONTACT_DAYS} dias.
+                      {attemptsSummary(selectedLead)}. Cada tentativa fica no historico do lead.
                     </small>
                   </div>
                 ) : null}
