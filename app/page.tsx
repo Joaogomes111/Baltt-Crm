@@ -1279,6 +1279,11 @@ export default function Home() {
   const [lossDialogReason, setLossDialogReason] = useState("");
   const [metaFeedbackMessage, setMetaFeedbackMessage] = useState("");
   const [metaFeedbackFailed, setMetaFeedbackFailed] = useState(false);
+  const [metaFeedbackRetry, setMetaFeedbackRetry] = useState<{
+    leadId: string;
+    eventKey: MetaCrmEventKey;
+  } | null>(null);
+  const [metaFeedbackRetrying, setMetaFeedbackRetrying] = useState(false);
 
   useEffect(() => {
     latestLeadsRef.current = leads;
@@ -2021,6 +2026,53 @@ export default function Home() {
     );
   }
 
+  async function deliverMetaCrmFeedback(
+    leadId: string,
+    eventKey: MetaCrmEventKey,
+    retrying = false,
+  ) {
+    if (retrying) setMetaFeedbackRetrying(true);
+
+    try {
+      const result = await sendMetaCrmFeedback(leadId, eventKey);
+      const sentAt = new Date().toISOString();
+      setLeads((current) =>
+        current.map((lead) =>
+          lead.id === leadId
+            ? {
+                ...lead,
+                metaCrmEvents: {
+                  ...lead.metaCrmEvents,
+                  [eventKey]: sentAt,
+                },
+              }
+            : lead,
+        ),
+      );
+      setMetaFeedbackFailed(false);
+      setMetaFeedbackRetry(null);
+      setMetaFeedbackMessage(
+        `Meta${result.testEvent ? " (teste)" : ""}: ${result.eventName || eventKey} enviado`,
+      );
+    } catch (error) {
+      const detail = getErrorMessage(error);
+      console.error("[Baltt CRM] Falha no feedback para a Meta", {
+        leadId,
+        eventKey,
+        error: detail,
+      });
+      setMetaFeedbackFailed(true);
+      setMetaFeedbackRetry({ leadId, eventKey });
+      setMetaFeedbackMessage(
+        detail === "Bad signature"
+          ? "Meta: token inválido. Atualize e tente novamente."
+          : `Meta: ${detail}`,
+      );
+    } finally {
+      if (retrying) setMetaFeedbackRetrying(false);
+    }
+  }
+
   function queueMetaCrmFeedback(previous: Lead, next: Lead) {
     if (!supabaseEnabled || !next.metaLeadId) return;
 
@@ -2029,36 +2081,7 @@ export default function Home() {
     );
 
     pendingEvents.forEach((eventKey) => {
-      sendMetaCrmFeedback(next.id, eventKey)
-        .then((result) => {
-          const sentAt = new Date().toISOString();
-          setLeads((current) =>
-            current.map((lead) =>
-              lead.id === next.id
-                ? {
-                    ...lead,
-                    metaCrmEvents: {
-                      ...lead.metaCrmEvents,
-                      [eventKey]: sentAt,
-                    },
-                  }
-                : lead,
-            ),
-          );
-          setMetaFeedbackFailed(false);
-          setMetaFeedbackMessage(
-            `Meta${result.testEvent ? " (teste)" : ""}: ${result.eventName || eventKey} enviado`,
-          );
-        })
-        .catch((error) => {
-          console.error("[Baltt CRM] Falha no feedback para a Meta", {
-            leadId: next.id,
-            eventKey,
-            error: getErrorMessage(error),
-          });
-          setMetaFeedbackFailed(true);
-          setMetaFeedbackMessage(`Meta: falha ao enviar ${eventKey}`);
-        });
+      void deliverMetaCrmFeedback(next.id, eventKey);
     });
   }
 
@@ -2636,6 +2659,22 @@ export default function Home() {
           <div className={`meta-feedback-panel ${metaFeedbackFailed ? "error" : "success"}`}>
             <span>Feedback Meta</span>
             <small>{metaFeedbackMessage}</small>
+            {metaFeedbackFailed && metaFeedbackRetry ? (
+              <button
+                className="meta-feedback-retry"
+                disabled={metaFeedbackRetrying}
+                onClick={() => {
+                  void deliverMetaCrmFeedback(
+                    metaFeedbackRetry.leadId,
+                    metaFeedbackRetry.eventKey,
+                    true,
+                  );
+                }}
+                type="button"
+              >
+                {metaFeedbackRetrying ? "Reenviando..." : "Tentar novamente"}
+              </button>
+            ) : null}
           </div>
         ) : null}
 

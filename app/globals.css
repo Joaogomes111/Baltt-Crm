@@ -2782,6 +2782,27 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+.meta-feedback-retry {
+  width: 100%;
+  min-height: 30px;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 107, 107, 0.42);
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.08);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.meta-feedback-retry:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.16);
+}
+
+.meta-feedback-retry:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .nav-list {
   gap: 6px;
   margin: 10px 0;
