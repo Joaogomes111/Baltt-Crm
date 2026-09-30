@@ -6,12 +6,13 @@ import {
   loadCrmSnapshot,
   saveCrmSnapshot,
   transferCrmLead,
+  sendMetaCrmFeedback,
   signInCrm,
   signOutCrm,
   supabase,
   supabaseEnabled,
 } from "../src/supabaseClient";
-import type { CrmUserPermission } from "../src/supabaseClient";
+import type { CrmUserPermission, MetaCrmEventKey } from "../src/supabaseClient";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
@@ -65,6 +66,12 @@ type Lead = {
   /** Empresa de origem, quando o lead foi transferido de outro funil. */
   transferredFrom?: string;
   transferredAt?: string;
+  metaLeadId?: string;
+  metaFormId?: string;
+  metaPageId?: string;
+  metaAdId?: string;
+  metaCampaignId?: string;
+  metaCrmEvents?: Partial<Record<MetaCrmEventKey, string>>;
   /** Linha do tempo do lead (cadastro, etapas, edicoes, transferencias). */
   history?: LeadHistoryEntry[];
 };
@@ -939,6 +946,32 @@ function statusFromStage(stage: StageKey) {
   return stages.find((item) => item.key === stage)?.label ?? "Novo WhatsApp";
 }
 
+function metaCrmEventsForChange(previous: Lead, next: Lead) {
+  const events = new Set<MetaCrmEventKey>();
+
+  if (previous.stage !== next.stage) {
+    if (next.stage === "atendimento") events.add("contacted");
+    if (next.stage === "qualificado") events.add("qualified");
+    if (next.stage === "proposta") events.add("proposal");
+    if (next.stage === "ganho") events.add("converted");
+  }
+
+  if (previous.qualified !== next.qualified) {
+    const qualification = next.qualified
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+
+    if (qualification === "sim" || qualification === "parcial") {
+      events.add("qualified");
+    }
+    if (qualification === "nao") events.add("disqualified");
+  }
+
+  return Array.from(events);
+}
+
 function parseMoney(value: string | undefined) {
   if (!value) return 0;
   const normalized = value
@@ -1244,6 +1277,8 @@ export default function Home() {
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [lossDialog, setLossDialog] = useState<{ leadId: string } | null>(null);
   const [lossDialogReason, setLossDialogReason] = useState("");
+  const [metaFeedbackMessage, setMetaFeedbackMessage] = useState("");
+  const [metaFeedbackFailed, setMetaFeedbackFailed] = useState(false);
 
   useEffect(() => {
     latestLeadsRef.current = leads;
@@ -1986,6 +2021,47 @@ export default function Home() {
     );
   }
 
+  function queueMetaCrmFeedback(previous: Lead, next: Lead) {
+    if (!supabaseEnabled || !next.metaLeadId) return;
+
+    const pendingEvents = metaCrmEventsForChange(previous, next).filter(
+      (eventKey) => !next.metaCrmEvents?.[eventKey],
+    );
+
+    pendingEvents.forEach((eventKey) => {
+      sendMetaCrmFeedback(next.id, eventKey)
+        .then((result) => {
+          const sentAt = new Date().toISOString();
+          setLeads((current) =>
+            current.map((lead) =>
+              lead.id === next.id
+                ? {
+                    ...lead,
+                    metaCrmEvents: {
+                      ...lead.metaCrmEvents,
+                      [eventKey]: sentAt,
+                    },
+                  }
+                : lead,
+            ),
+          );
+          setMetaFeedbackFailed(false);
+          setMetaFeedbackMessage(
+            `Meta${result.testEvent ? " (teste)" : ""}: ${result.eventName || eventKey} enviado`,
+          );
+        })
+        .catch((error) => {
+          console.error("[Baltt CRM] Falha no feedback para a Meta", {
+            leadId: next.id,
+            eventKey,
+            error: getErrorMessage(error),
+          });
+          setMetaFeedbackFailed(true);
+          setMetaFeedbackMessage(`Meta: falha ao enviar ${eventKey}`);
+        });
+    });
+  }
+
   function moveLead(leadId: string, stage: StageKey, lossReason?: string) {
     const targetLead = leads.find((lead) => lead.id === leadId);
     if (!targetLead || !companyIsAllowed(permission, targetLead.company)) return;
@@ -2022,6 +2098,8 @@ export default function Home() {
     });
 
     setLeads(nextLeads);
+    const updatedLead = nextLeads.find((lead) => lead.id === leadId);
+    if (updatedLead) queueMetaCrmFeedback(targetLead, updatedLead);
   }
 
   function confirmLoss() {
@@ -2255,6 +2333,7 @@ export default function Home() {
       );
       setSelectedLeadId(editingLead.id);
       setActiveCompany(form.company);
+      queueMetaCrmFeedback(editingLead, updatedLead);
     } else {
       const id = makeClientId("lead");
       const newLead = withHistory(
@@ -2550,6 +2629,13 @@ export default function Home() {
                       : "Modo local"}
             </span>
             <small>{syncMessage}</small>
+          </div>
+        ) : null}
+
+        {sidebarOpen && metaFeedbackMessage ? (
+          <div className={`meta-feedback-panel ${metaFeedbackFailed ? "error" : "success"}`}>
+            <span>Feedback Meta</span>
+            <small>{metaFeedbackMessage}</small>
           </div>
         ) : null}
 

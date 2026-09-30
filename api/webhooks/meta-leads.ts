@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createClient } from "@supabase/supabase-js";
+import { sendMetaCrmEvent } from "../../lib/meta-crm.mjs";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type StageKey = "novo" | "qualificado" | "atendimento" | "proposta" | "ganho" | "perdido";
@@ -68,7 +69,7 @@ type CrmLead = {
   metaCampaignId?: string;
 };
 
-const graphApiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
+const graphApiVersion = process.env.META_GRAPH_API_VERSION || "v26.0";
 const validCompanies: CompanyKey[] = ["baltt", "vale", "baltec"];
 
 function sendJson(res: ServerResponse, status: number, data: unknown) {
@@ -414,7 +415,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         const metaLead = await fetchMetaLead(leadgenId);
         const crmLead = buildCrmLead(metaLead, change.value);
         const result = await saveLeadToCrm(crmLead);
-        results.push({ leadgenId, company: crmLead.company, name: crmLead.name, ...result });
+        const metaFeedback = await sendMetaCrmEvent({
+          eventKey: "lead",
+          leadId: crmLead.metaLeadId,
+          email: crmLead.email,
+          phone: crmLead.phone,
+          eventTime: metaLead.created_time
+            ? Math.floor(new Date(metaLead.created_time).getTime() / 1000)
+            : change.value?.created_time,
+        });
+        results.push({
+          leadgenId,
+          company: crmLead.company,
+          name: crmLead.name,
+          metaFeedback,
+          ...result,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido.";
         console.error("[meta-leads] failed to process lead", {

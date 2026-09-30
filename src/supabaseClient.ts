@@ -13,6 +13,13 @@ export type CrmUserPermission = {
   email: string | null;
 };
 
+export type MetaCrmEventKey =
+  | "contacted"
+  | "qualified"
+  | "disqualified"
+  | "proposal"
+  | "converted";
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
@@ -199,4 +206,39 @@ export async function transferCrmLead(leadId: string, company: string): Promise<
   }
 
   return normalizeSnapshotPayload(data);
+}
+
+/**
+ * Envia ao servidor somente o id interno do lead e a mudanca de funil. O
+ * servidor valida a sessao/permissao, busca o metaLeadId na Supabase e usa o
+ * token secreto da Meta sem expo-lo no navegador.
+ */
+export async function sendMetaCrmFeedback(leadId: string, eventKey: MetaCrmEventKey) {
+  if (!supabase) throw new Error("Supabase is not configured");
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    throw new Error("Sessao expirada. Entre novamente no CRM.");
+  }
+
+  const response = await fetch("/api/meta-crm-event", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${data.session.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ leadId, eventKey }),
+  });
+  const result = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    eventName?: string;
+    testEvent?: boolean;
+  };
+
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || "Nao foi possivel enviar o evento para a Meta.");
+  }
+
+  return result;
 }

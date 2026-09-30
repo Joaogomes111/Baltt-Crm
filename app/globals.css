@@ -2753,6 +2753,35 @@ textarea:disabled {
   color: #8ea0b8;
 }
 
+.meta-feedback-panel {
+  display: grid;
+  gap: 4px;
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.meta-feedback-panel.error {
+  border-left-color: var(--red);
+}
+
+.meta-feedback-panel span {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.meta-feedback-panel small {
+  color: #8ea0b8;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .nav-list {
   gap: 6px;
   margin: 10px 0;

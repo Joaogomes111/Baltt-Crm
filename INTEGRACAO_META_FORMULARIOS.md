@@ -40,6 +40,9 @@ META_VERIFY_TOKEN
 META_APP_SECRET
 META_PAGE_ACCESS_TOKEN
 META_GRAPH_API_VERSION
+META_CRM_DATASET_ID
+META_CRM_ACCESS_TOKEN
+META_CRM_TEST_EVENT_CODE
 META_DEFAULT_COMPANY
 META_DEFAULT_SERVICE
 META_FORM_COMPANY_MAP
@@ -48,7 +51,7 @@ META_FORM_COMPANY_MAP
 Valores recomendados:
 
 ```txt
-META_GRAPH_API_VERSION=v25.0
+META_GRAPH_API_VERSION=v26.0
 META_DEFAULT_COMPANY=baltt
 META_FORM_COMPANY_MAP={}
 ```
@@ -117,3 +120,23 @@ Quando o primeiro lead teste chegar, entrar no CRM e procurar:
 - coluna `Novo WhatsApp`;
 - origem `Meta Ads`;
 - campanha/formulario nas informacoes do card.
+
+## 7. Feedback De Qualificacao Para A Meta
+
+O CRM envia eventos pela API de Conversoes para CRM somente quando o registro
+possui o `metaLeadId` original:
+
+- entrada pelo webhook: `Lead`;
+- inicio de atendimento: `ContactedLead`;
+- etapa qualificado ou qualificacao `Sim`/`Parcial`: `QualifiedLead`;
+- qualificacao `Nao`: `DisqualifiedLead`;
+- proposta: `ProposalSent`;
+- venda ganha: `ConvertedLead`.
+
+Mover um lead para `Perdido` nao o marca automaticamente como desqualificado.
+Perda comercial e falta de qualificacao sao informacoes diferentes.
+
+Durante a homologacao, configure `META_CRM_TEST_EVENT_CODE` em `Production`.
+Os eventos aparecerao em `Gerenciador de Eventos -> Eventos de teste`. Quando a
+validacao terminar, remova apenas essa variavel para passar a enviar eventos de
+producao.
