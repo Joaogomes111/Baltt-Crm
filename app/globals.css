@@ -2180,6 +2180,55 @@ textarea {
   font-weight: 950;
 }
 
+.sales-audit-section {
+  min-width: 0;
+  padding: 20px 0;
+  border-top: 1px solid #334155;
+  border-bottom: 1px solid #334155;
+}
+
+.sales-audit-cohort {
+  margin: 4px 0 12px;
+  color: #a7b9cf;
+  font-size: 12px;
+}
+
+.sales-audit-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sales-audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.sales-audit-table th,
+.sales-audit-table td {
+  padding: 12px;
+  border-bottom: 1px solid #26384f;
+}
+
+.sales-audit-table td {
+  white-space: nowrap;
+}
+
+.sales-audit-table thead {
+  color: #a7b9cf;
+}
+
+.sales-audit-details {
+  margin-top: 20px;
+}
+
+.sales-audit-details summary {
+  padding: 12px 0;
+  cursor: pointer;
+  color: #f6b21a;
+}
+
 .monthly-bars {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));

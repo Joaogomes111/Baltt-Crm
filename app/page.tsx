@@ -13,6 +13,7 @@ import {
   supabaseEnabled,
 } from "../src/supabaseClient";
 import type { CrmUserPermission, MetaCrmEventKey } from "../src/supabaseClient";
+import { dateMatchesPeriod as dateMatchesFilter, monthlySales, parseMoneyValue as parseMoney, salesInPeriod, sumValues } from "../lib/crm-reporting.mjs";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
@@ -109,7 +110,6 @@ const INVESTMENT_STORAGE_KEY = "baltt-crm-investments-v1";
 const AUTH_STORAGE_KEY = "baltt-crm-auth-v1";
 const LOGIN_USER = "Baltt@";
 const LOGIN_PASSWORD = "Baltt26@";
-const fixedToday = new Date("2026-08-19T12:00:00");
 
 const companies: Array<{
   key: CompanyKey;
@@ -824,7 +824,7 @@ function daysSince(date: string) {
   const value = new Date(`${normalizeDate(date)}T12:00:00`);
   return Math.max(
     0,
-    Math.round((fixedToday.getTime() - value.getTime()) / 86_400_000),
+    Math.round((Date.now() - value.getTime()) / 86_400_000),
   );
 }
 
@@ -848,38 +848,6 @@ function formatMonthKey(key: string) {
   })
     .format(new Date(year, month - 1, 1))
     .replace(".", "");
-}
-
-function dateTimeValue(date: string) {
-  const normalizedDate = normalizeDate(date);
-  if (!normalizedDate) return null;
-
-  const timestamp = new Date(`${normalizedDate}T12:00:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function dateMatchesFilter(
-  date: string,
-  filter: DateFilterKey,
-  customStart: string,
-  customEnd: string,
-) {
-  if (filter === "all") return true;
-
-  if (filter === "custom") {
-    const leadTime = dateTimeValue(date);
-    if (leadTime === null) return false;
-
-    const startTime = customStart ? dateTimeValue(customStart) : null;
-    const endTime = customEnd ? dateTimeValue(customEnd) : null;
-
-    if (startTime !== null && leadTime < startTime) return false;
-    if (endTime !== null && leadTime > endTime) return false;
-
-    return true;
-  }
-
-  return daysSince(date) <= Number(filter);
 }
 
 function normalizeSourceKey(source: string) {
@@ -970,16 +938,6 @@ function metaCrmEventsForChange(previous: Lead, next: Lead) {
   }
 
   return Array.from(events);
-}
-
-function parseMoney(value: string | undefined) {
-  if (!value) return 0;
-  const normalized = value
-    .replace(/[^\d,.-]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function normalizeDate(value: string) {
@@ -1525,7 +1483,7 @@ export default function Home() {
     [leads, activeCompany, activeCompanyAllowed],
   );
 
-  const filteredLeads = useMemo(() => {
+  const searchedCompanyLeads = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     return companyLeads
@@ -1544,8 +1502,11 @@ export default function Home() {
           .toLowerCase();
         return searchable.includes(normalizedQuery);
       })
-      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
-      .filter((lead) => {
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters));
+  }, [companyLeads, query, sourceFilters]);
+
+  const filteredLeads = useMemo(() => {
+    return searchedCompanyLeads.filter((lead) => {
         return dateMatchesFilter(
           lead.arrivalDate,
           dateFilter,
@@ -1559,14 +1520,17 @@ export default function Home() {
         return sortOrder === "desc" ? second - first : first - second;
       });
   }, [
-    companyLeads,
-    query,
-    sourceFilters,
+    searchedCompanyLeads,
     dateFilter,
     customDateStart,
     customDateEnd,
     sortOrder,
   ]);
+
+  const companySales = useMemo(
+    () => salesInPeriod(searchedCompanyLeads, dateFilter, customDateStart, customDateEnd),
+    [searchedCompanyLeads, dateFilter, customDateStart, customDateEnd],
+  );
 
   const tableLeads = useMemo(() => {
     return filteredLeads.filter(
@@ -1598,44 +1562,45 @@ export default function Home() {
   const stageTotals = useMemo(() => {
     return stages.map((stage) => ({
       ...stage,
-      count: companyLeads.filter((lead) => lead.stage === stage.key).length,
-      value: companyLeads
+      count: filteredLeads.filter((lead) => lead.stage === stage.key).length,
+      value: filteredLeads
         .filter((lead) => lead.stage === stage.key)
         .reduce((sum, lead) => sum + lead.proposalValue, 0),
     }));
-  }, [companyLeads]);
+  }, [filteredLeads]);
 
   const metrics = useMemo(() => {
-    const won = companyLeads.filter((lead) => lead.stage === "ganho");
-    const lost = companyLeads.filter((lead) => lead.stage === "perdido");
-    const pipeline = companyLeads.filter(
+    const won = filteredLeads.filter((lead) => lead.stage === "ganho");
+    const lost = filteredLeads.filter((lead) => lead.stage === "perdido");
+    const pipeline = filteredLeads.filter(
       (lead) => lead.stage !== "ganho" && lead.stage !== "perdido",
     );
     const proposalValue = pipeline.reduce(
       (sum, lead) => sum + lead.proposalValue,
       0,
     );
-    const wonValue = won.reduce((sum, lead) => sum + lead.proposalValue, 0);
-    const qualified = companyLeads.filter((lead) =>
+    const wonValue = sumValues(companySales);
+    const qualified = filteredLeads.filter((lead) =>
       ["Sim", "Parcial"].includes(lead.qualified),
     );
 
     return {
-      total: companyLeads.length,
+      total: filteredLeads.length,
       pipeline: pipeline.length,
       proposalValue,
       wonValue,
+      wonCount: companySales.length,
       conversion:
-        companyLeads.length > 0
-          ? Math.round((won.length / companyLeads.length) * 100)
+        filteredLeads.length > 0
+          ? Math.round((won.length / filteredLeads.length) * 100)
           : 0,
       lost: lost.length,
       qualified:
-        companyLeads.length > 0
-          ? Math.round((qualified.length / companyLeads.length) * 100)
+        filteredLeads.length > 0
+          ? Math.round((qualified.length / filteredLeads.length) * 100)
           : 0,
     };
-  }, [companyLeads]);
+  }, [filteredLeads, companySales]);
 
   const investmentTotal = investments.reduce(
     (sum, item) => sum + investmentLineTotal(item),
@@ -1651,11 +1616,19 @@ export default function Home() {
   const leadCost =
     metrics.total > 0 ? investmentTotal / Math.max(metrics.total, 1) : 0;
 
-  const reportFilteredAllowedLeads = useMemo(() => {
+  const reportAllowedLeads = useMemo(() => {
     return leads
       .filter((lead) => companyIsAllowed(permission, lead.company))
-      .filter((lead) => sourceMatchesFilter(lead, sourceFilters))
-      .filter((lead) =>
+      .filter((lead) => sourceMatchesFilter(lead, sourceFilters));
+  }, [leads, permission, sourceFilters]);
+
+  const reportAllowedSales = useMemo(
+    () => salesInPeriod(reportAllowedLeads, dateFilter, customDateStart, customDateEnd),
+    [reportAllowedLeads, dateFilter, customDateStart, customDateEnd],
+  );
+
+  const reportFilteredAllowedLeads = useMemo(() => {
+    return reportAllowedLeads.filter((lead) =>
         dateMatchesFilter(
           lead.arrivalDate,
           dateFilter,
@@ -1669,9 +1642,7 @@ export default function Home() {
         return sortOrder === "desc" ? second - first : first - second;
       });
   }, [
-    leads,
-    permission,
-    sourceFilters,
+    reportAllowedLeads,
     dateFilter,
     customDateStart,
     customDateEnd,
@@ -1683,17 +1654,18 @@ export default function Home() {
       const items = reportFilteredAllowedLeads.filter(
         (lead) => lead.company === company.key,
       );
+      const sales = reportAllowedSales.filter((lead) => lead.company === company.key);
       return {
         ...company,
         count: items.length,
         open: items.filter(
           (lead) => lead.stage !== "ganho" && lead.stage !== "perdido",
         ).length,
-        won: items.filter((lead) => lead.stage === "ganho").length,
-        value: items.reduce((sum, lead) => sum + lead.proposalValue, 0),
+        won: sales.length,
+        value: sumValues(sales),
       };
     });
-  }, [reportFilteredAllowedLeads]);
+  }, [reportFilteredAllowedLeads, reportAllowedSales]);
 
   const reportScopeIsAll = reportScope === "all" && hasAdminAccess;
   const reportCompanyKey = reportScope === "all" ? activeCompany : reportScope;
@@ -1704,6 +1676,15 @@ export default function Home() {
   const reportScopeFocus = reportScopeIsAll
     ? "Consolidado Baltt, Vale e Baltec"
     : reportCompanyData.focus;
+
+  const reportSales = useMemo(
+    () => reportAllowedSales.filter((lead) => reportScopeIsAll || lead.company === reportCompanyKey),
+    [reportAllowedSales, reportScopeIsAll, reportCompanyKey],
+  );
+  const reportSalesMonths = useMemo(
+    () => monthlySales(reportSales).map((item) => ({ ...item, label: item.key === "sem-data" ? "Sem data" : `${formatMonthKey(item.key)}/${item.key.slice(0, 4)}` })),
+    [reportSales],
+  );
 
   const reportLeads = useMemo(() => {
     if (reportScope === "all" && hasAdminAccess) {
@@ -1744,7 +1725,7 @@ export default function Home() {
       (sum, lead) => sum + lead.proposalValue,
       0,
     );
-    const wonValue = won.reduce((sum, lead) => sum + lead.proposalValue, 0);
+    const wonValue = sumValues(reportSales);
     const qualified = reportLeads.filter((lead) =>
       ["Sim", "Parcial"].includes(lead.qualified),
     );
@@ -1754,6 +1735,7 @@ export default function Home() {
       pipeline: pipeline.length,
       proposalValue,
       wonValue,
+      wonCount: reportSales.length,
       conversion:
         reportLeads.length > 0
           ? Math.round((won.length / reportLeads.length) * 100)
@@ -1764,7 +1746,7 @@ export default function Home() {
           ? Math.round((qualified.length / reportLeads.length) * 100)
           : 0,
     };
-  }, [reportLeads]);
+  }, [reportLeads, reportSales]);
 
   const reportSourceTotals = useMemo(() => {
     const grouped = new Map<
@@ -1804,9 +1786,6 @@ export default function Home() {
         key: string;
         label: string;
         leads: number;
-        proposals: number;
-        won: number;
-        value: number;
       }
     >();
 
@@ -1819,15 +1798,9 @@ export default function Home() {
           key,
           label: formatMonthKey(key),
           leads: 0,
-          proposals: 0,
-          won: 0,
-          value: 0,
         };
 
       current.leads += 1;
-      current.proposals += lead.stage === "proposta" ? 1 : 0;
-      current.won += lead.stage === "ganho" ? 1 : 0;
-      current.value += lead.proposalValue;
       grouped.set(key, current);
     });
 
@@ -1836,8 +1809,9 @@ export default function Home() {
       .slice(-7);
   }, [reportLeads]);
 
-  const reportWonCount =
-    reportStageTotals.find((stage) => stage.key === "ganho")?.count ?? 0;
+  const reportWonCount = reportSales.length;
+  const reportEntrySales = reportLeads.filter((lead) => lead.stage === "ganho");
+  const reportEntrySalesValue = sumValues(reportEntrySales);
   const reportAverageTicket =
     reportWonCount > 0 ? reportMetrics.wonValue / reportWonCount : 0;
   const reportLeadCost =
@@ -1881,8 +1855,8 @@ export default function Home() {
     const paddingX = 34;
     const paddingY = 30;
     const rows =
-      reportMonthlyReport.length > 0
-        ? reportMonthlyReport
+      reportSalesMonths.length > 0
+        ? reportSalesMonths
         : [
             {
               key: "sem-data",
@@ -1917,7 +1891,7 @@ export default function Home() {
         : "";
 
     return { width: chartWidth, height: chartHeight, points, line, area };
-  }, [reportMonthlyReport]);
+  }, [reportSalesMonths]);
 
   const headerMetrics = activeViewKey === "relatorios" ? reportMetrics : metrics;
   const headerLeadCost =
@@ -2826,7 +2800,7 @@ export default function Home() {
             <MetricPictogram icon="sale" />
             <span>Vendas fechadas</span>
             <strong>{currency.format(headerMetrics.wonValue)}</strong>
-            <small>{headerMetrics.conversion}% conversao</small>
+            <small>{headerMetrics.wonCount} negocios por data de fechamento</small>
           </article>
           <article className="metric">
             <MetricPictogram icon="cost" />
@@ -2936,7 +2910,7 @@ export default function Home() {
               </label>
             ) : null}
             <label>
-              Entrada
+              Periodo
               <select
                 value={dateFilter}
                 onChange={(event) =>
@@ -3568,7 +3542,7 @@ export default function Home() {
 
             <div className="analytics-kpi-grid">
               <article className="analytics-kpi">
-                <span>Leads no funil</span>
+                <span>Leads recebidos</span>
                 <strong>{reportMetrics.total}</strong>
                 <small>{reportMetrics.pipeline} em andamento</small>
               </article>
@@ -3580,10 +3554,10 @@ export default function Home() {
               <article className="analytics-kpi">
                 <span>Vendas fechadas</span>
                 <strong>{currency.format(reportMetrics.wonValue)}</strong>
-                <small>{reportWonCount} negocios ganhos</small>
+                <small>{reportWonCount} negocios por data de fechamento</small>
               </article>
               <article className="analytics-kpi">
-                <span>Conversao</span>
+                <span>Conversao dos leads recebidos</span>
                 <strong>{reportMetrics.conversion}%</strong>
                 <small>{currency.format(reportAverageTicket)} ticket medio</small>
               </article>
@@ -3594,9 +3568,9 @@ export default function Home() {
                 <div className="analytics-card-heading">
                   <div>
                     <span>Evolucao de receita</span>
-                    <small>Valor em proposta e vendas por mes</small>
+                    <small>Vendas por mes de fechamento</small>
                   </div>
-                  <strong>{currency.format(reportMetrics.proposalValue + reportMetrics.wonValue)}</strong>
+                  <strong>{currency.format(reportMetrics.wonValue)}</strong>
                 </div>
 
                 <div className="line-chart-shell">
@@ -3725,6 +3699,45 @@ export default function Home() {
               </article>
             </div>
 
+            <section className="sales-audit-section" aria-label="Conferencia de vendas">
+              <div className="analytics-card-heading">
+                <div>
+                  <span>Vendas por fechamento</span>
+                  <small>{reportSales.filter((lead) => !lead.proposalValue).length} negocios sem valor cadastrado</small>
+                </div>
+                <strong>{currency.format(reportMetrics.wonValue)}</strong>
+              </div>
+              <p className="sales-audit-cohort">
+                Leads recebidos no periodo que foram fechados: {reportEntrySales.length} negocios, {currency.format(reportEntrySalesValue)}.
+              </p>
+              <div className="sales-audit-scroll">
+                <table className="sales-audit-table">
+                  <thead><tr>
+                    <th scope="col">Mes</th>
+                    {companies.filter((company) => companyIsAllowed(permission, company.key) && (reportScopeIsAll || company.key === reportCompanyKey)).map((company) => <th scope="col" key={company.key}>{company.shortName}</th>)}
+                    <th scope="col">Negocios</th><th scope="col">Total</th>
+                  </tr></thead>
+                  <tbody>{reportSalesMonths.map((month) => <tr key={month.key}>
+                    <th scope="row">{month.label}</th>
+                    {companies.filter((company) => companyIsAllowed(permission, company.key) && (reportScopeIsAll || company.key === reportCompanyKey)).map((company) => <td key={company.key}>{currency.format(month.companies[company.key] ?? 0)}</td>)}
+                    <td>{month.count}</td><td>{currency.format(month.value)}</td>
+                  </tr>)}</tbody>
+                </table>
+                {reportSales.length === 0 ? <div className="empty-dark">Nenhuma venda fechada no periodo</div> : null}
+              </div>
+              <details className="sales-audit-details">
+                <summary>Negocios fechados ({reportWonCount})</summary>
+                <div className="sales-audit-scroll">
+                  <table className="sales-audit-table">
+                    <thead><tr><th scope="col">Cliente</th><th scope="col">Empresa</th><th scope="col">Entrada</th><th scope="col">Fechamento</th><th scope="col">Valor</th></tr></thead>
+                    <tbody>{[...reportSales].sort((a, b) => b.closeDate.localeCompare(a.closeDate)).map((lead) => <tr key={lead.id}>
+                      <th scope="row">{lead.name}</th><td>{getCompany(lead.company).shortName}</td><td>{formatDate(lead.arrivalDate)}</td><td>{formatDate(lead.closeDate)}</td><td>{lead.proposalValue ? currency.format(lead.proposalValue) : "Valor pendente"}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
             <div className="analytics-bottom-grid">
               <article className="analytics-card">
                 <div className="analytics-card-heading">
@@ -3742,9 +3755,6 @@ export default function Home() {
                           key: "sem-data",
                           label: "Sem dados",
                           leads: 0,
-                          proposals: 0,
-                          won: 0,
-                          value: 0,
                         },
                       ]
                   ).map((item) => (
@@ -3843,7 +3853,7 @@ export default function Home() {
                         <span>{company.shortName}</span>
                         {allowed ? (
                           <>
-                            <strong>{company.count}</strong>
+                            <strong>{currency.format(company.value)}</strong>
                             <small>{company.won} ganhos</small>
                           </>
                         ) : (
