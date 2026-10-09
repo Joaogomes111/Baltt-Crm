@@ -3729,9 +3729,9 @@ export default function Home() {
                 <summary>Negocios fechados ({reportWonCount})</summary>
                 <div className="sales-audit-scroll">
                   <table className="sales-audit-table">
-                    <thead><tr><th scope="col">Cliente</th><th scope="col">Empresa</th><th scope="col">Entrada</th><th scope="col">Fechamento</th><th scope="col">Valor</th></tr></thead>
+                    <thead><tr><th scope="col">Cliente</th><th scope="col">Empresa</th><th scope="col">Origem</th><th scope="col">Entrada</th><th scope="col">Fechamento</th><th scope="col">Valor</th></tr></thead>
                     <tbody>{[...reportSales].sort((a, b) => b.closeDate.localeCompare(a.closeDate)).map((lead) => <tr key={lead.id}>
-                      <th scope="row">{lead.name}</th><td>{getCompany(lead.company).shortName}</td><td>{formatDate(lead.arrivalDate)}</td><td>{formatDate(lead.closeDate)}</td><td>{lead.proposalValue ? currency.format(lead.proposalValue) : "Valor pendente"}</td>
+                      <th scope="row">{lead.name}</th><td>{getCompany(lead.company).shortName}</td><td>{sourceDisplayValue(lead.source)}</td><td>{formatDate(lead.arrivalDate)}</td><td>{formatDate(lead.closeDate)}</td><td>{lead.proposalValue ? currency.format(lead.proposalValue) : "Valor pendente"}</td>
                     </tr>)}</tbody>
                   </table>
                 </div>
