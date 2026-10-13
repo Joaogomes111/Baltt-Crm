@@ -640,6 +640,20 @@ function formatDateInput(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function isHistoricalSale(lead: Lead) {
+  return (
+    lead.stage === "ganho" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(lead.closeDate) &&
+    lead.closeDate.slice(0, 7) < formatDateInput(new Date()).slice(0, 7)
+  );
+}
+
+function confirmHistoricalSaleChange() {
+  return window.confirm(
+    "Este negocio foi fechado em um mes anterior. A alteracao mudara os relatorios ja emitidos. Deseja continuar?",
+  );
+}
+
 const leadFieldLabels: Partial<Record<keyof LeadForm, string>> = {
   company: "empresa",
   stage: "etapa",
@@ -2070,6 +2084,12 @@ export default function Home() {
       return;
     }
 
+    if (
+      stage !== targetLead.stage &&
+      isHistoricalSale(targetLead) &&
+      !confirmHistoricalSaleChange()
+    ) return;
+
     const nextLeads = leads.map((lead) => {
       if (lead.id !== leadId) return lead;
       if (lead.stage === stage) return lead;
@@ -2256,6 +2276,15 @@ export default function Home() {
     if (!form.name.trim()) return;
     if (!companyIsAllowed(permission, form.company)) return;
 
+    if (
+      form.stage === "ganho" &&
+      !form.closeDate &&
+      (!editingLead || editingLead.stage !== "ganho" || !!editingLead.closeDate)
+    ) {
+      window.alert("Informe a data de fechamento para registrar uma venda.");
+      return;
+    }
+
     const actor = actorLabel(permission.email);
 
     // Regra das 3 tentativas tambem vale pelo formulario.
@@ -2275,6 +2304,13 @@ export default function Home() {
       const changedFields = (Object.keys(form) as Array<keyof LeadForm>).filter(
         (key) => String(form[key] ?? "") !== String(previousForm[key] ?? ""),
       );
+      if (
+        isHistoricalSale(editingLead) &&
+        changedFields.some((key) =>
+          ["proposalValue", "closeDate", "stage", "company"].includes(key),
+        ) &&
+        !confirmHistoricalSaleChange()
+      ) return;
       const entries: LeadHistoryEntry[] = [];
 
       if (form.company !== editingLead.company) {
@@ -2305,7 +2341,15 @@ export default function Home() {
         entries.push(
           historyEntry(
             "edit",
-            `Editado: ${otherChanges.map((key) => leadFieldLabels[key] ?? key).join(", ")}`,
+            `Editado: ${otherChanges.map((key) => {
+              if (key === "proposalValue") {
+                return `valor da proposta (${currency.format(toMoneyNumber(editingLead.proposalValue))} -> ${currency.format(toMoneyNumber(form.proposalValue))})`;
+              }
+              if (key === "closeDate") {
+                return `data de fechamento (${formatDate(editingLead.closeDate)} -> ${formatDate(form.closeDate)})`;
+              }
+              return leadFieldLabels[key] ?? key;
+            }).join(", ")}`,
             actor,
           ),
         );
