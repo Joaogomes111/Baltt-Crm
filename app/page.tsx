@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, WheelEvent } from "react";
 import {
   loadCrmSnapshot,
@@ -14,6 +14,7 @@ import {
 } from "../src/supabaseClient";
 import type { CrmUserPermission, MetaCrmEventKey } from "../src/supabaseClient";
 import { dateMatchesPeriod as dateMatchesFilter, monthlySales, parseMoneyValue as parseMoney, salesInPeriod, sumValues } from "../lib/crm-reporting.mjs";
+import { changedLeads, indexLeadVersions } from "../lib/crm-sync.mjs";
 
 type CompanyKey = "baltt" | "vale" | "baltec";
 type ViewKey = "funis" | "leads" | "investimento" | "relatorios";
@@ -1240,11 +1241,11 @@ export default function Home() {
   const loadingRemoteRef = useRef(false);
   const latestLeadsRef = useRef(leads);
   const latestInvestmentsRef = useRef(investments);
+  const syncedLeadsRef = useRef(new Map<string, string>());
+  const syncedInvestmentsRef = useRef("");
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
   // Ids apagados pelo usuario e ainda nao confirmados na Supabase.
   const pendingDeletedIdsRef = useRef<Set<string>>(new Set());
-  // Quando true, a proxima mudanca de leads/investimentos veio da Supabase e
-  // nao precisa ser salva de volta.
-  const skipNextSaveRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [lossDialog, setLossDialog] = useState<{ leadId: string } | null>(null);
@@ -1269,6 +1270,61 @@ export default function Home() {
       JSON.stringify(investments),
     );
   }, [investments]);
+
+  const persistPendingChanges = useCallback(() => {
+    const previous = saveInFlightRef.current;
+    const operation = (async () => {
+      if (previous) await previous.catch(() => undefined);
+
+      const currentLeads = latestLeadsRef.current;
+      const currentInvestments = latestInvestmentsRef.current;
+      const changed = changedLeads(currentLeads, syncedLeadsRef.current);
+      const deletedLeadIds = Array.from(pendingDeletedIdsRef.current);
+      const investmentVersion = JSON.stringify(currentInvestments);
+      if (
+        changed.length === 0 &&
+        deletedLeadIds.length === 0 &&
+        investmentVersion === syncedInvestmentsRef.current
+      ) return;
+
+      setSyncState("saving");
+      setSyncMessage("Salvando na Supabase...");
+      const snapshot = await saveCrmSnapshot({
+        leads: changed,
+        investments: currentInvestments,
+        deletedLeadIds,
+      });
+      deletedLeadIds.forEach((id) => pendingDeletedIdsRef.current.delete(id));
+      syncedInvestmentsRef.current = investmentVersion;
+
+      if (
+        latestLeadsRef.current === currentLeads &&
+        latestInvestmentsRef.current === currentInvestments
+      ) {
+        const mergedLeads = snapshot.leads as Lead[];
+        syncedLeadsRef.current = indexLeadVersions(mergedLeads);
+        if (JSON.stringify(mergedLeads) !== JSON.stringify(currentLeads)) {
+          setLeads(mergedLeads);
+        }
+      } else {
+        // Edicoes feitas durante o pedido continuam pendentes para o proximo envio.
+        changed.forEach((lead) =>
+          syncedLeadsRef.current.set(lead.id, JSON.stringify(lead)),
+        );
+        deletedLeadIds.forEach((id) => syncedLeadsRef.current.delete(id));
+      }
+
+      setSyncState("shared");
+      setSyncMessage("Base Supabase ativa");
+    })();
+
+    saveInFlightRef.current = operation;
+    const clear = () => {
+      if (saveInFlightRef.current === operation) saveInFlightRef.current = null;
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }, []);
 
   useEffect(() => {
     if (!supabaseEnabled || !supabase) return;
@@ -1327,7 +1383,8 @@ export default function Home() {
 
         // A base remota e a fonte da verdade: substitui o que estava no navegador.
         pendingDeletedIdsRef.current = new Set();
-        skipNextSaveRef.current = true;
+        syncedLeadsRef.current = indexLeadVersions(remoteLeads);
+        syncedInvestmentsRef.current = JSON.stringify(remoteInvestments);
         setLeads(remoteLeads);
         setSelectedLeadId(remoteLeads[0]?.id ?? null);
         setInvestments(remoteInvestments);
@@ -1364,35 +1421,9 @@ export default function Home() {
       return;
     }
 
-    if (skipNextSaveRef.current) {
-      skipNextSaveRef.current = false;
-      return;
-    }
-
     const saveTimer = window.setTimeout(() => {
       saveTimerRef.current = null;
-      setSyncState("saving");
-      setSyncMessage("Salvando na Supabase...");
-
-      const deletedLeadIds = Array.from(pendingDeletedIdsRef.current);
-
-      saveCrmSnapshot({ leads, investments, deletedLeadIds })
-        .then((snapshot) => {
-          deletedLeadIds.forEach((id) => pendingDeletedIdsRef.current.delete(id));
-
-          // Se o usuario nao mexeu em nada enquanto salvava, aplica a base
-          // mesclada que voltou do banco (inclui leads que chegaram por webhook).
-          if (latestLeadsRef.current === leads) {
-            const mergedLeads = snapshot.leads as Lead[];
-            if (JSON.stringify(mergedLeads) !== JSON.stringify(leads)) {
-              skipNextSaveRef.current = true;
-              setLeads(mergedLeads);
-            }
-          }
-
-          setSyncState("shared");
-          setSyncMessage("Base Supabase ativa");
-        })
+      persistPendingChanges()
         .catch((error) => {
           console.error("[Baltt CRM] Falha ao salvar na Supabase", error);
           setSyncState("error");
@@ -1405,7 +1436,7 @@ export default function Home() {
       window.clearTimeout(saveTimer);
       if (saveTimerRef.current === saveTimer) saveTimerRef.current = null;
     };
-  }, [leads, investments, authState]);
+  }, [leads, investments, authState, persistPendingChanges]);
 
   // Recarrega a base quando a aba volta ao foco (e a cada 60s), para mostrar
   // leads novos da Meta/site sem precisar dar F5. So roda quando nao ha
@@ -1422,28 +1453,40 @@ export default function Home() {
         !remoteReadyRef.current ||
         loadingRemoteRef.current ||
         syncState !== "shared" ||
+        saveTimerRef.current !== null ||
+        saveInFlightRef.current !== null ||
         pendingDeletedIdsRef.current.size > 0
       ) {
         return;
       }
 
       busy = true;
+      const leadsAtStart = latestLeadsRef.current;
+      const investmentsAtStart = latestInvestmentsRef.current;
       try {
         const snapshot = await loadCrmSnapshot();
         const remoteLeads = snapshot.leads as Lead[];
         const remoteInvestments = normalizeInvestments(snapshot.investments);
 
-        if (syncState !== "shared") return;
+        if (
+          syncState !== "shared" ||
+          latestLeadsRef.current !== leadsAtStart ||
+          latestInvestmentsRef.current !== investmentsAtStart ||
+          saveTimerRef.current !== null ||
+          saveInFlightRef.current !== null ||
+          pendingDeletedIdsRef.current.size > 0
+        ) return;
+
+        syncedLeadsRef.current = indexLeadVersions(remoteLeads);
+        syncedInvestmentsRef.current = JSON.stringify(remoteInvestments);
 
         if (JSON.stringify(remoteLeads) !== JSON.stringify(latestLeadsRef.current)) {
-          skipNextSaveRef.current = true;
           setLeads(remoteLeads);
         }
         if (
           JSON.stringify(remoteInvestments) !==
           JSON.stringify(latestInvestmentsRef.current)
         ) {
-          skipNextSaveRef.current = true;
           setInvestments(remoteInvestments);
         }
       } catch (error) {
@@ -2219,19 +2262,13 @@ export default function Home() {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
-        const deletedLeadIds = Array.from(pendingDeletedIdsRef.current);
-        await saveCrmSnapshot({
-          leads: latestLeadsRef.current,
-          investments: latestInvestmentsRef.current,
-          deletedLeadIds,
-        });
-        deletedLeadIds.forEach((id) => pendingDeletedIdsRef.current.delete(id));
       }
+      await persistPendingChanges();
 
       const snapshot = await transferCrmLead(lead.id, targetCompany);
       const nextLeads = snapshot.leads as Lead[];
 
-      skipNextSaveRef.current = true;
+      syncedLeadsRef.current = indexLeadVersions(nextLeads);
       setLeads(nextLeads);
       setSelectedLeadId(null);
       setSyncState("shared");
